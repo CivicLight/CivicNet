@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The Litecoin Core developers
+# Copyright (c) 2026 The CivicNet Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test MWEB chainstate recovery after an interrupted coins DB flush."""

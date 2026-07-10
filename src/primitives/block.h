@@ -10,6 +10,7 @@
 #include <serialize.h>
 #include <uint256.h>
 #include <mweb/mweb_models.h>
+#include <crypto/civiclight_hash.h>
 
 /** Nodes collect new transactions into a block, hash them into a hash tree,
  * and scan through nonce values to make the block's hash satisfy proof-of-work
@@ -51,9 +52,23 @@ public:
         return (nBits == 0);
     }
 
-    uint256 GetHash() const;
+            uint256 GetHash() const
+    {
+        CHashWriter ss(SER_GETHASH, PROTOCOL_VERSION);
+        ss << nVersion << hashPrevBlock << hashMerkleRoot << nTime << nBits << nNonce;
+        return ss.GetHash();
+    }
 
-    uint256 GetPoWHash() const;
+    uint256 GetPoWHash() const
+    {
+        uint256 thash;
+        CHashWriter ss(SER_GETHASH, PROTOCOL_VERSION);
+        ss << nVersion << hashPrevBlock << hashMerkleRoot << nTime << nBits << nNonce;
+        uint256 raw_hash = ss.GetHash();
+        civiclight_hash(&raw_hash, 32, &thash);
+        return thash;
+    }
+
 
     int64_t GetBlockTime() const
     {
@@ -65,6 +80,7 @@ public:
 class CBlock : public CBlockHeader
 {
 public:
+
     // network and disk
     std::vector<CTransactionRef> vtx;
 
@@ -118,7 +134,9 @@ public:
     std::string ToString() const;
 
     // Returns the hogex (integrating) transaction, if it exists.
-    CTransactionRef GetHogEx() const noexcept;
+    CTransactionRef GetHogEx() const noexcept {
+        return nullptr;
+    }
 };
 
 /** Describes a place in the block chain to another node such that if the

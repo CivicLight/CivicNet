@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 The Litecoin Core developers
+# Copyright (c) 2026 The CivicNet Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
-"""Minimal litecoin_scrypt replacement for the functional test framework."""
+"""Minimal civicnet_scrypt replacement for the functional test framework."""
 
 import hashlib
 
 
 def getPoWHash(header):
-    """Return Litecoin's scrypt_1024_1_1_256 proof-of-work hash."""
+    """Return CivicNet's scrypt_1024_1_1_256 proof-of-work hash."""
     if not isinstance(header, (bytes, bytearray, memoryview)):
         raise TypeError("header must be a bytes-like object")
 

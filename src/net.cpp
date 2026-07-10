@@ -1640,7 +1640,8 @@ static void ThreadMapPort()
     struct IGDdatas data;
     int r;
 
-    r = UPNP_GetValidIGD(devlist, &urls, &data, lanaddr, sizeof(lanaddr));
+    char errorMsg[40];
+    r = UPNP_GetValidIGD(devlist, &urls, &data, lanaddr, sizeof(lanaddr), errorMsg, sizeof(errorMsg));
     if (r == 1)
     {
         if (fDiscover) {

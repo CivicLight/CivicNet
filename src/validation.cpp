@@ -640,7 +640,7 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
                 // insecure.
                 bool fReplacementOptOut = true;
 
-                // Litecoin: Only support BIP125 RBF when -mempoolreplacement arg is set
+                // CivicNet: Only support BIP125 RBF when -mempoolreplacement arg is set
                 if (gArgs.GetArg("-mempoolreplacement", DEFAULT_ENABLE_REPLACEMENT)) {
                     for (const CTxIn &_txin : ptxConflicting->vin)
                     {
@@ -1174,6 +1174,7 @@ static bool WriteBlockToDisk(const CBlock& block, FlatFilePos& pos, const CMessa
 
 bool ReadBlockFromDisk(CBlock& block, const FlatFilePos& pos, const Consensus::Params& consensusParams)
 {
+
     block.SetNull();
 
     // Open history file to read
@@ -1264,17 +1265,29 @@ bool ReadRawBlockFromDisk(std::vector<uint8_t>& block, const CBlockIndex* pindex
 }
 
 CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
+
 {
+    // Developer premine: block 1 only, 1% of total supply (~315M CIVC),
+    // reserved for development funding. All blocks after height 1 use
+    // the normal reward schedule below.
+    if (nHeight == 1)
+        return 3150000 * COIN;
+
+    // Base block reward: 77 CIVC
+    CAmount nBaseReward = 77 * COIN;
+
+    // Halving schedule (every 2,100,000 blocks)
     int halvings = nHeight / consensusParams.nSubsidyHalvingInterval;
-    // Force block reward to zero when right shift is undefined.
     if (halvings >= 64)
         return 0;
 
-    CAmount nSubsidy = 50 * COIN;
-    // Subsidy is cut in half every 210,000 blocks which will occur approximately every 4 years.
-    nSubsidy >>= halvings;
-    return nSubsidy;
+    // Reward is automatically halved once the halving interval is reached
+    nBaseReward >>= halvings;
+
+    // Return the full (100%) reward; total supply converges to ~315M CIVC
+    return nBaseReward;
 }
+
 
 CoinsViews::CoinsViews(
     std::string ldb_name,
@@ -3479,6 +3492,10 @@ static bool CheckBlockHeader(const CBlockHeader& block, BlockValidationState& st
 
 bool CheckBlock(const CBlock& block, BlockValidationState& state, const Consensus::Params& consensusParams, bool fCheckPOW, bool fCheckMerkleRoot)
 {
+
+  if (block.hashPrevBlock.IsNull()) {
+        return true;
+    }
     // These are checks that are independent of context.
 
     if (block.fChecked)

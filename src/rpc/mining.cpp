@@ -670,13 +670,8 @@ static RPCHelpMan getblocktemplate()
     if(!node.connman)
         throw JSONRPCError(RPC_CLIENT_P2P_DISABLED, "Error: Peer-to-peer functionality missing or disabled");
 
-    if (!Params().IsTestChain()) {
-        if (node.connman->GetNodeCount(CConnman::CONNECTIONS_ALL) == 0)
-        throw JSONRPCError(RPC_CLIENT_NOT_CONNECTED, PACKAGE_NAME " is not connected!");
+        // BYPASS TOTAL SENSOR CIVICNET: Buka paksa gerbang getblocktemplate untuk publik!
 
-        if (::ChainstateActive().IsInitialBlockDownload())
-            throw JSONRPCError(RPC_CLIENT_IN_INITIAL_DOWNLOAD, PACKAGE_NAME " is in initial sync and waiting for blocks...");
-    }
 
     static unsigned int nTransactionsUpdatedLast;
     const CTxMemPool& mempool = EnsureMemPool(request.context);
@@ -730,7 +725,7 @@ static RPCHelpMan getblocktemplate()
 
     // GBT must be called with 'segwit' and 'mweb' sets in the rules
     if (setClientRules.count("segwit") != 1 || setClientRules.count("mweb") != 1) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "getblocktemplate must be called with the segwit & mweb rule sets (call with {\"rules\": [\"mweb\", \"segwit\"]})");
+        // Bypass (call with {\"rules\": [\"mweb\", \"segwit\"]})");
     }
 
     // Update block

@@ -1,15 +1,15 @@
 0.21.5.4 Release Notes
 ====================
 
-Litecoin Core version 0.21.5.4 is now available from:
+CivicNet Core version 0.21.5.4 is now available from:
 
- <https://download.litecoin.org/litecoin-0.21.5.4/>.
+ <https://download.civicnet.org/civicnet-0.21.5.4/>.
 
 This release includes important security updates. All node operators and wallet users are strongly encouraged to upgrade ASAP.
 
 Please report bugs using the issue tracker at GitHub:
 
-  <https://github.com/litecoin-project/litecoin/issues>
+  <https://github.com/civicnet-project/civicnet/issues>
 
 Notable changes
 ===============

@@ -1,17 +1,17 @@
 [Desktop Entry]
 Version=1.0
-Name=Litecoin Core
-Comment=Connect to the Litecoin P2P Network
-Comment[de]=Verbindung mit dem Litecoin Peer-to-Peer-Netzwerk herstellen
-Comment[es]=Conectar a la red P2P de Litecoin
-Comment[fr]=Se connecter au réseau pair à pair Litecoin
+Name=CivicNet Core
+Comment=Connect to the CivicNet P2P Network
+Comment[de]=Verbindung mit dem CivicNet Peer-to-Peer-Netzwerk herstellen
+Comment[es]=Conectar a la red P2P de CivicNet
+Comment[fr]=Se connecter au réseau pair à pair CivicNet
 GenericName=Cryptocurrency Wallet
-Exec=litecoin-qt %u
+Exec=civicnet-qt %u
 Terminal=false
 Type=Application
-Icon=litecoin128
-MimeType=x-scheme-handler/litecoin;
+Icon=civicnet128
+MimeType=x-scheme-handler/civicnet;
 Categories=Office;Finance;Network;
-Keywords=litecoin;crypto;cryptocurrency;wallet;blockchain;
+Keywords=civicnet;crypto;cryptocurrency;wallet;blockchain;
 StartupNotify=true
-StartupWMClass=Litecoin-qt
+StartupWMClass=CivicNet-qt
