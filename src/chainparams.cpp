@@ -58,6 +58,10 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout = 1230767999;
 
         nDefaultPort = 9333;
+        pchMessageStart[0] = 0xc1;
+        pchMessageStart[1] = 0x76;
+        pchMessageStart[2] = 0x51;
+        pchMessageStart[3] = 0xf3;
         nPruneAfterHeight = 100000;
         m_assumed_blockchain_size = 2;
         m_assumed_chain_state_size = 1;
@@ -103,6 +107,10 @@ public:
         consensus.fPowAllowMinDifficultyBlocks = true;
         consensus.fPowNoRetargeting = false;
         nDefaultPort = 19333;
+        pchMessageStart[0] = 0xd4;
+        pchMessageStart[1] = 0x9a;
+        pchMessageStart[2] = 0x2b;
+        pchMessageStart[3] = 0x87;
         vSeeds.clear();
         vFixedSeeds.clear();
 
@@ -138,6 +146,10 @@ public:
         consensus.fPowAllowMinDifficultyBlocks = false;
         consensus.fPowNoRetargeting = false;
         nDefaultPort = 39333;
+        pchMessageStart[0] = 0xa2;
+        pchMessageStart[1] = 0x3e;
+        pchMessageStart[2] = 0x8f;
+        pchMessageStart[3] = 0x64;
         vSeeds.clear();
         vFixedSeeds.clear();
     }
