@@ -3,7 +3,7 @@ CivicNet Core integration/staging tree
 
 [![Build Status](https://travis-ci.org/civicnet-project/civicnet.svg?branch=master)](https://travis-ci.org/civicnet-project/civicnet)
 
-https://civicnet.org
+[https://civiclight.github.io/website/]
 
 What is CivicNet?
 ----------------
