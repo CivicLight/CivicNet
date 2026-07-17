@@ -15,7 +15,7 @@ out collectively by the network. CivicNet Core is the name of open source
 software which enables the use of this currency.
 
 For more information, as well as an immediately useable, binary version of
-the CivicNet Core software, see [https://civiclight.github.io/website/].
+the CivicNet Core software, see https://civiclight.github.io/website/.
 
 License
 -------
