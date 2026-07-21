@@ -59,13 +59,21 @@ public:
         return ss.GetHash();
     }
 
+    // Fork activation: blocks with nTime before this use the original
+    // algorithm; blocks at/after this use the ASIC-resistant civiclight v2.
+    static const uint32_t CIVICLIGHT_V2_ACTIVATION_TIME = 1784797200;
+
     uint256 GetPoWHash() const
     {
         uint256 thash;
         CHashWriter ss(SER_GETHASH, PROTOCOL_VERSION);
         ss << nVersion << hashPrevBlock << hashMerkleRoot << nTime << nBits << nNonce;
         uint256 raw_hash = ss.GetHash();
-        civiclight_hash(&raw_hash, 32, &thash);
+        if (nTime >= CIVICLIGHT_V2_ACTIVATION_TIME) {
+            civiclight_hash_v2(&raw_hash, 32, &thash);
+        } else {
+            civiclight_hash_v1(&raw_hash, 32, &thash);
+        }
         return thash;
     }
 

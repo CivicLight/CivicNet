@@ -17,6 +17,7 @@
 #endif
 #include <codecvt>
 #include <windows.h>
+#include <limits>
 #endif
 
 namespace fsbridge {

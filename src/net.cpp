@@ -1641,7 +1641,14 @@ static void ThreadMapPort()
     int r;
 
     char errorMsg[40];
-    r = UPNP_GetValidIGD(devlist, &urls, &data, lanaddr, sizeof(lanaddr), errorMsg, sizeof(errorMsg));
+    char wanaddr[40] = "";
+#ifdef WIN32
+    // MinGW cross-compile toolchain typically bundles an older miniupnpc (5-arg API)
+    r = UPNP_GetValidIGD(devlist, &urls, &data, lanaddr, sizeof(lanaddr));
+#else
+    // Native Linux builds typically have a newer miniupnpc (7-arg API)
+    r = UPNP_GetValidIGD(devlist, &urls, &data, lanaddr, sizeof(lanaddr), wanaddr, sizeof(wanaddr));
+#endif
     if (r == 1)
     {
         if (fDiscover) {
