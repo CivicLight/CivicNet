@@ -7,6 +7,7 @@
 #include <versionbitsinfo.h>
 #include <arith_uint256.h>
 #include <assert.h>
+#include <pow.h>
 
 static CBlock CreateGenesisBlock(const char* pszTimestamp, const CScript& genesisOutputScript, uint32_t nTime, uint32_t nNonce, uint32_t nBits, int32_t nVersion, const CAmount& genesisReward)
 {
@@ -75,6 +76,7 @@ public:
 
         vSeeds.clear();
         vFixedSeeds.clear();
+        vSeeds.push_back("103.180.165.99");
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1, 28);
         base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1, 5);
@@ -116,7 +118,8 @@ public:
 
         const char* pszTimestamp = "CivicNet 2026: Empowering Low-Spec CPUs with Cutting-Edge Hybrid Blockchain";
         const CScript genesisOutputScript = CScript() << ParseHex("040184710fa689ad5023690c80f3a49c8f13f8d45b8c857fbcbc8bc4a8e4d3eb4b10f4d4604fa08dce601aaf0f470216fe1b51850b4acf21b179c45070ac7b03a9") << OP_CHECKSIG;
-        genesis = CreateGenesisBlock(pszTimestamp, genesisOutputScript, 1783443600, 757950, 0x1e0ffff0, 1, 149 * COIN);
+        genesis = CreateGenesisBlock(pszTimestamp, genesisOutputScript, 1783443600, 78042, 0x1e0ffff0, 1, 149 * COIN);
+
         consensus.hashGenesisBlock = genesis.GetHash();
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1, 111);
@@ -159,6 +162,7 @@ class CRegTestParams : public CChainParams {
 public:
     CRegTestParams() {
         strNetworkID = CBaseChainParams::REGTEST;
+        bech32_hrp = "rcivc";
         consensus.nSubsidyHalvingInterval = 150;
         consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         consensus.nPowTargetTimespan = 3.5 * 24 * 60 * 60;
@@ -168,10 +172,32 @@ public:
         nDefaultPort = 19444;
         vSeeds.clear();
         vFixedSeeds.clear();
-
         const char* pszTimestamp = "CivicNet 2026: Empowering Low-Spec CPUs with Cutting-Edge Hybrid Blockchain";
+        consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
         const CScript genesisOutputScript = CScript() << ParseHex("040184710fa689ad5023690c80f3a49c8f13f8d45b8c857fbcbc8bc4a8e4d3eb4b10f4d4604fa08dce601aaf0f470216fe1b51850b4acf21b179c45070ac7b03a9") << OP_CHECKSIG;
-        genesis = CreateGenesisBlock(pszTimestamp, genesisOutputScript, 1783443600, 757950, 0x1e0ffff0, 1, 149 * COIN);
+        genesis = CreateGenesisBlock(pszTimestamp, genesisOutputScript, 1783443600, 0, 0x1f7fffff, 1, 149 * COIN);
+
+        // TEMPORARY: search for a valid nonce under the new civiclight_hash algorithm
+        if (true) {
+            fprintf(stderr, "Searching for valid regtest genesis nonce (using built-in CheckProofOfWork)...\n"); fflush(stderr);
+            for (uint32_t nonce = 0; nonce < 0xFFFFFFFF; nonce++) {
+                genesis.nNonce = nonce;
+                if (nonce < 5) {
+                    bool result = CheckProofOfWork(genesis.GetPoWHash(), genesis.nBits, consensus);
+                    arith_uint256 t; t.SetCompact(genesis.nBits);
+                    fprintf(stderr, "  nonce=%u hash=%s target=%s result=%d\n", nonce, genesis.GetPoWHash().ToString().c_str(), t.GetHex().c_str(), (int)result);
+                    fflush(stderr);
+                }
+                if (CheckProofOfWork(genesis.GetPoWHash(), genesis.nBits, consensus)) {
+                    fprintf(stderr, "FOUND regtest nonce: %u\n", nonce);
+                    fprintf(stderr, "Genesis hash: %s\n", genesis.GetHash().ToString().c_str());
+                    fflush(stderr);
+                    break;
+                }
+                if (nonce % 1000 == 0) { fprintf(stderr, "  tried %u...\n", nonce); fflush(stderr); }
+            }
+        }
+
         consensus.hashGenesisBlock = genesis.GetHash();
 
         fDefaultConsistencyChecks = true;

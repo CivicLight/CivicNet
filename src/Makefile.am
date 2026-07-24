@@ -489,6 +489,12 @@ crypto_libbitcoin_crypto_base_a_SOURCES = \
   crypto/siphash.h \
   crypto/civiclight_hash.cpp \
   crypto/civiclight_hash.h \
+  crypto/yespower/yespower-opt.c \
+  crypto/yespower/yespower_sha256.c \
+  crypto/yespower/yespower.h \
+  crypto/yespower/yespower_sha256.h \
+  crypto/yespower/insecure_memzero.h \
+  crypto/yespower/sysendian.h \
   libmw/src/crypto/Hasher.cpp
 
 if USE_ASM

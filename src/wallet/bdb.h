@@ -11,6 +11,14 @@
 #include <serialize.h>
 #include <streams.h>
 #include <util/system.h>
+
+// MinGW compatibility: BSD-style type aliases needed by db_cxx.h
+#ifdef WIN32
+typedef uint8_t u_int8_t;
+typedef uint16_t u_int16_t;
+typedef uint32_t u_int32_t;
+typedef uint64_t u_int64_t;
+#endif
 #include <wallet/db.h>
 
 #include <atomic>
