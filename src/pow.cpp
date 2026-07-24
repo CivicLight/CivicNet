@@ -16,6 +16,16 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
         return nProofOfWorkLimit;
     }
 
+    // Fork boundary: ONLY the single block whose own nTime crosses the
+    // threshold while its parent is still pre-v2. Reset difficulty to the
+    // easiest allowed value for that one block, so the network does not
+    // stall waiting for the normal +/-8% per-block adjustment to catch up.
+    if (pblock != nullptr &&
+        pblock->nTime >= (uint32_t)CBlockHeader::CIVICLIGHT_V2_ACTIVATION_TIME &&
+        pindexLast->GetBlockTime() < (int64_t)CBlockHeader::CIVICLIGHT_V2_ACTIVATION_TIME) {
+        return nProofOfWorkLimit;
+    }
+
     const CBlockIndex* pindexFirst = pindexLast->pprev;
     if (pindexFirst == nullptr) return nProofOfWorkLimit;
 
@@ -55,11 +65,11 @@ bool CheckProofOfWork(uint256 hash, unsigned int nBits, const Consensus::Params&
 
     bnTarget.SetCompact(nBits, &fNegative, &fOverflow);
 
-    // Baris pengecekan batas maksimal target kesulitan
+    // Reject if the target exceeds the network difficulty limit
     if (fNegative || bnTarget == 0 || fOverflow || bnTarget > UintToArith256(params.powLimit))
         return false;
 
-    // Memastikan hash blok berada di bawah target kesulitan konsensus
+    // Ensure the block hash is below the consensus difficulty target
     if (UintToArith256(hash) > bnTarget)
         return false;
 
