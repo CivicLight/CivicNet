@@ -4,6 +4,8 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <validation.h>
+#include <pos_coinstake.h>
+#include <pos_kernel.h>
 
 #include <arith_uint256.h>
 #include <chain.h>
@@ -105,6 +107,7 @@ bool CBlockIndexWorkComparator::operator()(const CBlockIndex *pa, const CBlockIn
 }
 
 ChainstateManager g_chainman;
+Mutex g_process_new_block_mutex;
 
 CChainState& ChainstateActive()
 {
@@ -1190,8 +1193,10 @@ bool ReadBlockFromDisk(CBlock& block, const FlatFilePos& pos, const Consensus::P
         return error("%s: Deserialize or I/O error - %s at %s", __func__, e.what(), pos.ToString());
     }
 
-    // Check the header
-    if (!CheckProofOfWork(block.GetPoWHash(), block.nBits, consensusParams))
+    // Check the header -- PoS blocks never have real proof-of-work (they're
+    // validated via kernel hash, not mined), so CheckProofOfWork() is not
+    // applicable and would always spuriously fail for them.
+    if (!block.IsProofOfStake() && !CheckProofOfWork(block.GetPoWHash(), block.nBits, consensusParams))
         return error("ReadBlockFromDisk: Errors in block header at %s", pos.ToString());
 
     // Signet only: check block solution
@@ -2206,13 +2211,16 @@ bool CChainState::ConnectBlock(const CBlock& block, BlockValidationState& state,
     int nInputs = 0;
     int64_t nSigOpsCost = 0;
     blockundo.vtxundo.reserve(block.vtx.size() - 1);
+    CAmount capturedStakerBalance = 0;
+    int capturedStakerHeight = 0;
     for (unsigned int i = 0; i < block.vtx.size(); i++)
     {
         const CTransaction &tx = *(block.vtx[i]);
+        bool fIsCoinstake = block.IsProofOfStake() && i == 1;
 
         nInputs += tx.vin.size();
 
-        if (!tx.IsCoinBase())
+        if (!tx.IsCoinBase() && !fIsCoinstake)
         {
             CAmount txfee = 0;
             TxValidationState tx_state;
@@ -2240,6 +2248,25 @@ bool CChainState::ConnectBlock(const CBlock& block, BlockValidationState& state,
                 LogPrintf("ERROR: %s: contains a non-BIP68-final transaction\n", __func__);
                 return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-txns-nonfinal");
             }
+        }
+
+        // Coinstake kernel input must still be unspent (and, if it was a
+        // coinbase output, mature) BEFORE we touch GetTransactionSigOpCost()
+        // below -- that call accesses the same coin via `view` and will
+        // hit a hard assert (!coin.IsSpent()) if it's already gone, instead
+        // of failing gracefully. Checking here first turns that crash into
+        // a clean block rejection.
+        if (fIsCoinstake) {
+            const COutPoint& kernelInputPre = tx.vin[0].prevout;
+            const Coin& stakerCoinPre = view.AccessCoin(kernelInputPre);
+            if (stakerCoinPre.IsSpent()) {
+                return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-cs-input", "coinstake kernel input not found in UTXO set");
+            }
+            if (stakerCoinPre.IsCoinBase() && (pindex->nHeight - stakerCoinPre.nHeight) < COINBASE_MATURITY) {
+                return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-cs-premature-spend", "tried to stake an immature coinbase output");
+            }
+            capturedStakerBalance = stakerCoinPre.out.nValue;
+            capturedStakerHeight = stakerCoinPre.nHeight;
         }
 
         // GetTransactionSigOpCost counts 3 types of sigops:
@@ -2280,6 +2307,43 @@ bool CChainState::ConnectBlock(const CBlock& block, BlockValidationState& state,
     if (block.vtx[0]->GetValueOut() > blockReward) {
         LogPrintf("ERROR: ConnectBlock(): coinbase pays too much (actual=%d vs limit=%d)\n", block.vtx[0]->GetValueOut(), blockReward);
         return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-cb-amount");
+    }
+
+    // PoS blocks: coinstake (vtx[1]) carries the full reward instead of
+    // the coinbase. vout[1] payout must not exceed staker's original
+    // balance (vin[0] value from the view) plus the block reward.
+    // NOTE: this checks the payout ceiling only -- full kernel/PoW-style
+    // hash validation against the staker's actual balance is a separate,
+    // not-yet-implemented step.
+    if (block.IsProofOfStake()) {
+        int lastPoSHeight = pindex->pprev ? pindex->pprev->nLastPoSHeight : -1;
+        if (!CanBeProofOfStake(pindex->nHeight, lastPoSHeight)) {
+            return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-cs-clustering", "PoS block too close to the previous PoS block");
+        }
+        const CTxOut& stakePayout = block.vtx[1]->vout[1];
+        const COutPoint& kernelInput = block.vtx[1]->vin[0].prevout;
+        CAmount stakerBalance = capturedStakerBalance;
+        if (stakePayout.nValue > stakerBalance + blockReward) {
+            LogPrintf("ERROR: ConnectBlock(): coinstake pays too much (actual=%d vs limit=%d)\n", stakePayout.nValue, stakerBalance + blockReward);
+            return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-cs-amount");
+        }
+
+        // Validate the actual PoS kernel proof: the staker must have found
+        // a valid kernel hash under the current stake modifier/target.
+        arith_uint256 stakeTargetCompact;
+        stakeTargetCompact.SetCompact(pindex->nStakeTarget);
+        bool validKernel = CheckStakeKernel(
+            pindex->nStakeModifier,
+            pindex->pprev ? pindex->pprev->nTime : block.nTime,
+            (uint32_t)capturedStakerHeight, // prevTxOffset substitute: containing block height (avoids a disk lookup for exact byte offset, still deterministic entropy per the original design intent)
+            (uint32_t)kernelInput.n,      // voutN: the actual output index being spent
+            block.nTime,
+            stakerBalance,
+            stakeTargetCompact
+        );
+        if (!validKernel) {
+            return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-cs-kernel", "invalid proof-of-stake kernel");
+        }
     }
 
     if (!control.Wait()) {
@@ -3349,6 +3413,78 @@ CBlockIndex* BlockManager::AddToBlockIndex(const CBlockHeader& block)
     }
     pindexNew->nTimeMax = (pindexNew->pprev ? std::max(pindexNew->pprev->nTimeMax, pindexNew->nTime) : pindexNew->nTime);
     pindexNew->nChainWork = (pindexNew->pprev ? pindexNew->pprev->nChainWork : 0) + GetBlockProof(*pindexNew);
+
+    // PoS: update stake modifier at H-block boundaries, otherwise inherit
+    // from the parent. Target similarly inherits by default (real retarget
+    // logic against actual PoS block spacing is a separate future step).
+    if (pindexNew->pprev == nullptr) {
+        pindexNew->nStakeModifier = GetInitialStakeModifier(block.GetHash(), block.nTime);
+        pindexNew->nStakeTarget = 0; // PoS not active at genesis; activated on first use
+    } else if (pindexNew->pprev->nStakeTarget == 0) {
+        // PoS target not yet initialized on the chain -- start at the
+        // easiest allowed value (mirrors the civiclight v2 fork's
+        // powLimit-reset approach at activation).
+        pindexNew->nStakeModifier = pindexNew->pprev->nStakeModifier;
+        pindexNew->nStakeTarget = 0x1e0ffff0; // powLimit-equivalent compact bits
+    } else if (IsStakeModifierBoundary(pindexNew->nHeight)) {
+        int refHeight = GetStakeModifierReferenceHeight(pindexNew->nHeight);
+        const CBlockIndex* refBlock = (refHeight >= 0) ? pindexNew->pprev->GetAncestor(refHeight) : nullptr;
+        if (refBlock != nullptr) {
+            pindexNew->nStakeModifier = ComputeStakeModifier(pindexNew->pprev->nStakeModifier, *refBlock->phashBlock, (uint32_t)refHeight);
+        } else {
+            pindexNew->nStakeModifier = pindexNew->pprev->nStakeModifier;
+        }
+        pindexNew->nStakeTarget = pindexNew->pprev->nStakeTarget;
+    } else {
+        pindexNew->nStakeModifier = pindexNew->pprev->nStakeModifier;
+        pindexNew->nStakeTarget = pindexNew->pprev->nStakeTarget;
+    }
+
+    // PoS: retarget the stake target when this block is itself PoS, using
+    // spacing since the previous PoS block and a target spacing derived
+    // from the current PoW/PoS ratio (mirrors the PoW +/-8%-per-adjustment
+    // pattern via GetNextStakeTarget()). Skipped if the target isn't yet
+    // initialized or there's no prior PoS block to measure spacing against
+    // -- in those cases the inherited target from above stands.
+    if (pindexNew->pprev != nullptr && pindexNew->nStakeTarget != 0 && block.IsProofOfStake() && pindexNew->pprev->nLastPoSHeight >= 0) {
+        const CBlockIndex* prevPoSBlock = pindexNew->pprev->GetAncestor(pindexNew->pprev->nLastPoSHeight);
+        if (prevPoSBlock != nullptr) {
+            int64_t actualSpacing = (int64_t)pindexNew->nTime - (int64_t)prevPoSBlock->nTime;
+            int ratioBps = pindexNew->pprev->nPoSRatioBps > 0 ? pindexNew->pprev->nPoSRatioBps : STAKE_RATIO_START_BPS;
+            int64_t targetSpacing = (int64_t)Params().GetConsensus().nPowTargetSpacing * 10000LL / ratioBps;
+            arith_uint256 currentTarget;
+            currentTarget.SetCompact(pindexNew->nStakeTarget);
+            arith_uint256 maxTarget;
+            maxTarget.SetCompact(0x1e0ffff0);
+            arith_uint256 newTarget = GetNextStakeTarget(currentTarget, actualSpacing, targetSpacing, maxTarget);
+            pindexNew->nStakeTarget = newTarget.GetCompact();
+        }
+    }
+    // Track the most recent PoS block height for anti-clustering enforcement.
+    if (pindexNew->pprev == nullptr) {
+        pindexNew->nLastPoSHeight = block.IsProofOfStake() ? 0 : -1;
+    } else if (block.IsProofOfStake()) {
+        pindexNew->nLastPoSHeight = pindexNew->nHeight;
+    } else {
+        pindexNew->nLastPoSHeight = pindexNew->pprev->nLastPoSHeight;
+        }
+    // PoS: maintain the dynamic PoW/PoS ratio. At each STAKE_RATIO_WINDOW_BLOCKS
+    // boundary, adjust the ratio based on how many PoS blocks actually landed
+    // in the just-completed window vs. the target implied by the prior ratio.
+    // Off-boundary, inherit the ratio and keep counting PoS blocks toward the
+    // current window. This ratio feeds the PoS target retarget as a target
+    // spacing, so it's a soft/self-correcting influence, not a hard cutoff.
+    if (pindexNew->pprev == nullptr) {
+        pindexNew->nPoSRatioBps = STAKE_RATIO_START_BPS;
+        pindexNew->nPoSCountInWindow = 0; // genesis is never PoS
+    } else if ((pindexNew->nHeight % STAKE_RATIO_WINDOW_BLOCKS) == 0) {
+        int targetCount = (int)((int64_t)STAKE_RATIO_WINDOW_BLOCKS * pindexNew->pprev->nPoSRatioBps / 10000);
+        pindexNew->nPoSRatioBps = AdjustPoSRatio(pindexNew->pprev->nPoSRatioBps, pindexNew->pprev->nPoSCountInWindow, targetCount);
+        pindexNew->nPoSCountInWindow = block.IsProofOfStake() ? 1 : 0;
+    } else {
+        pindexNew->nPoSRatioBps = pindexNew->pprev->nPoSRatioBps;
+        pindexNew->nPoSCountInWindow = pindexNew->pprev->nPoSCountInWindow + (block.IsProofOfStake() ? 1 : 0);
+    }
     pindexNew->RaiseValidity(BLOCK_VALID_TREE);
     if (pindexBestHeader == nullptr || pindexBestHeader->nChainWork < pindexNew->nChainWork)
         pindexBestHeader = pindexNew;
@@ -3483,8 +3619,9 @@ static bool FindUndoPos(BlockValidationState &state, int nFile, FlatFilePos &pos
 
 static bool CheckBlockHeader(const CBlockHeader& block, BlockValidationState& state, const Consensus::Params& consensusParams, bool fCheckPOW = true)
 {
-    // Check proof of work matches claimed amount
-    if (fCheckPOW && !CheckProofOfWork(block.GetPoWHash(), block.nBits, consensusParams))
+    // Check proof of work matches claimed amount (skipped for PoS blocks,
+    // which are validated via the kernel condition in ConnectBlock instead).
+    if (fCheckPOW && !block.IsProofOfStake() && !CheckProofOfWork(block.GetPoWHash(), block.nBits, consensusParams))
         return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, "high-hash", "proof of work failed");
 
     return true;
@@ -3538,6 +3675,14 @@ bool CheckBlock(const CBlock& block, BlockValidationState& state, const Consensu
     // First transaction must be coinbase, the rest must not be
     if (block.vtx.empty() || !block.vtx[0]->IsCoinBase())
         return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-cb-missing", "first tx is not coinbase");
+
+    // PoS blocks: second transaction must be a valid coinstake structure.
+    // Full kernel/UTXO-value validation happens later in ConnectBlock(),
+    // where chainstate access is available -- this only checks structure.
+    if (block.IsProofOfStake()) {
+        if (block.vtx.size() < 2 || !IsCoinStakeStructure(*block.vtx[1]))
+            return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-cs-missing", "second tx is not a valid coinstake");
+    }
     for (unsigned int i = 1; i < block.vtx.size(); i++)
         if (block.vtx[i]->IsCoinBase())
             return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-cb-multiple", "more than one coinbase");
@@ -3655,9 +3800,10 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, BlockValidatio
     assert(pindexPrev != nullptr);
     const int nHeight = pindexPrev->nHeight + 1;
 
-    // Check proof of work
+    // Check proof of work (skipped for PoS blocks, whose nBits reflects
+    // nStakeTarget and is validated via the kernel condition instead).
     const Consensus::Params& consensusParams = params.GetConsensus();
-    if (block.nBits != GetNextWorkRequired(pindexPrev, &block, consensusParams))
+    if (!block.IsProofOfStake() && block.nBits != GetNextWorkRequired(pindexPrev, &block, consensusParams))
         return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, "bad-diffbits", "incorrect proof of work");
 
     // Check against checkpoints

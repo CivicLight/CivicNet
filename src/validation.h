@@ -959,6 +959,16 @@ public:
 
 /** DEPRECATED! Please use node.chainman instead. May only be used in validation.cpp internally */
 extern ChainstateManager g_chainman GUARDED_BY(::cs_main);
+/** PoS: serializes calls to ChainstateManager::ProcessNewBlock() across threads
+ *  (RPC-triggered block generation vs. the wallet staking scheduler thread).
+ *  ProcessNewBlock() internally releases and re-takes cs_main between its
+ *  AcceptBlock() and ActivateBestChain() phases, leaving a window where a
+ *  second concurrent ProcessNewBlock() call from another thread can mutate
+ *  chain state mid-operation, corrupting the first call's view and causing
+ *  crashes (e.g. an aborted assert(!coin.IsSpent()) in GetP2SHSigOpCount).
+ *  Any code calling ProcessNewBlock() must hold this mutex for the duration
+ *  of the call. */
+extern Mutex g_process_new_block_mutex;
 
 /** Please prefer the identical ChainstateManager::ActiveChainstate */
 CChainState& ChainstateActive();

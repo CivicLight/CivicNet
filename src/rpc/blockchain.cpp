@@ -145,6 +145,10 @@ UniValue blockheaderToJSON(const CBlockIndex* tip, const CBlockIndex* blockindex
     result.pushKV("difficulty", GetDifficulty(blockindex));
     result.pushKV("chainwork", blockindex->nChainWork.GetHex());
     result.pushKV("nTx", (uint64_t)blockindex->nTx);
+    result.pushKV("stakeModifier", blockindex->nStakeModifier.GetHex());
+    result.pushKV("stakeTarget", strprintf("%08x", blockindex->nStakeTarget));
+    result.pushKV("posRatioBps", blockindex->nPoSRatioBps);
+    result.pushKV("posCountInWindow", blockindex->nPoSCountInWindow);
 
     if (blockindex->mweb_header != nullptr) {
         UniValue mweb_header(UniValue::VOBJ);
@@ -209,6 +213,10 @@ UniValue blockToJSON(const CBlock& block, const CBlockIndex* tip, const CBlockIn
     result.pushKV("difficulty", GetDifficulty(blockindex));
     result.pushKV("chainwork", blockindex->nChainWork.GetHex());
     result.pushKV("nTx", (uint64_t)blockindex->nTx);
+    result.pushKV("stakeModifier", blockindex->nStakeModifier.GetHex());
+    result.pushKV("stakeTarget", strprintf("%08x", blockindex->nStakeTarget));
+    result.pushKV("posRatioBps", blockindex->nPoSRatioBps);
+    result.pushKV("posCountInWindow", blockindex->nPoSCountInWindow);
 
     if (!block.mweb_block.IsNull()) {
         UniValue mweb_block(UniValue::VOBJ);

@@ -3720,7 +3720,10 @@ void PeerManager::ProcessMessage(CNode& pfrom, const std::string& msg_type, CDat
             // we have a chain with at least nMinimumChainWork), and we ignore
             // compact blocks with less work than our tip, it is safe to treat
             // reconstructed compact blocks as having been requested.
-            m_chainman.ProcessNewBlock(m_chainparams, pblock, /*fForceProcessing=*/true, &fNewBlock);
+            {
+                LOCK(g_process_new_block_mutex);
+                m_chainman.ProcessNewBlock(m_chainparams, pblock, /*fForceProcessing=*/true, &fNewBlock);
+            }
             if (fNewBlock) {
                 pfrom.nLastBlockTime = GetTime();
             } else {
@@ -3810,7 +3813,10 @@ void PeerManager::ProcessMessage(CNode& pfrom, const std::string& msg_type, CDat
             // disk-space attacks), but this should be safe due to the
             // protections in the compact block handler -- see related comment
             // in compact block optimistic reconstruction handling.
-            m_chainman.ProcessNewBlock(m_chainparams, pblock, /*fForceProcessing=*/true, &fNewBlock);
+            {
+                LOCK(g_process_new_block_mutex);
+                m_chainman.ProcessNewBlock(m_chainparams, pblock, /*fForceProcessing=*/true, &fNewBlock);
+            }
             if (fNewBlock) {
                 pfrom.nLastBlockTime = GetTime();
             } else {
@@ -3872,7 +3878,10 @@ void PeerManager::ProcessMessage(CNode& pfrom, const std::string& msg_type, CDat
             mapBlockSource.emplace(hash, std::make_pair(pfrom.GetId(), true));
         }
         bool fNewBlock = false;
-        m_chainman.ProcessNewBlock(m_chainparams, pblock, forceProcessing, &fNewBlock);
+        {
+            LOCK(g_process_new_block_mutex);
+            m_chainman.ProcessNewBlock(m_chainparams, pblock, forceProcessing, &fNewBlock);
+        }
         if (fNewBlock) {
             pfrom.nLastBlockTime = GetTime();
         } else {

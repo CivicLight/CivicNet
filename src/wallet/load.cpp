@@ -4,6 +4,12 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <wallet/load.h>
+#include <pos_kernel.h>
+#include <chain.h>
+#include <chainparams.h>
+#include <consensus/merkle.h>
+#include <validation.h>
+#include <timedata.h>
 
 #include <fs.h>
 #include <interfaces/chain.h>
@@ -120,6 +126,110 @@ bool LoadWallets(interfaces::Chain& chain)
     }
 }
 
+static void TryStakeAllWallets()
+{
+    uint256 tipStakeModifier;
+    uint32_t tipStakeTarget;
+    uint32_t tipTime;
+    uint256 tipHash;
+    int tipHeight;
+    uint32_t tipMedianTimePast;
+    {
+        LOCK(cs_main);
+        CBlockIndex* tip = ::ChainActive().Tip();
+        if (tip == nullptr) return;
+        tipStakeModifier = tip->nStakeModifier;
+        tipStakeTarget = tip->nStakeTarget;
+        tipTime = (uint32_t)tip->nTime;
+        tipHash = tip->GetBlockHash();
+        tipHeight = tip->nHeight;
+        tipMedianTimePast = (uint32_t)tip->GetMedianTimePast();
+    }
+
+    uint32_t nowTime = std::max((uint32_t)GetAdjustedTime(), (uint32_t)tipMedianTimePast + 1);
+    uint32_t candidateTime = NextValidStakeTimestamp(nowTime);
+
+    arith_uint256 target;
+    target.SetCompact(tipStakeTarget);
+    if (target == 0) return; // PoS not yet active on this chain
+
+    for (const std::shared_ptr<CWallet>& pwallet : GetWallets()) {
+        if (pwallet->IsLocked()) continue;
+
+        LogPrintf("PoS: staking check tick for wallet %s\n", pwallet->GetName());
+
+        std::vector<COutputCoin> vCoins;
+            {
+        LOCK(pwallet->cs_wallet);
+        pwallet->AvailableCoins(vCoins);
+            }
+
+        for (const auto& coin : vCoins) {
+            CAmount balance = coin.GetInputCoin().GetAmount();
+            bool found = CheckStakeKernel(
+                tipStakeModifier,
+                tipTime,
+                (uint32_t)coin.GetDepth(), // block-depth substitute for tx offset, consistent with ConnectBlock's approach
+                (uint32_t)coin.GetInputCoin().GetOutpoint().n,
+                candidateTime,
+                balance,
+                target
+            );
+            if (found) {
+                LogPrintf("PoS: valid stake kernel found for wallet %s, amount=%d, nTimeTx=%u\n", pwallet->GetName(), balance, candidateTime);
+
+                CMutableTransaction coinstake;
+                {
+                    LOCK(pwallet->cs_wallet);
+                CTxDestination dest;
+                if (!coin.GetDestination(dest)) {
+                    LogPrintf("PoS: could not extract destination for coinstake output\n");
+                    continue;
+                }
+                CScript stakerScript = GetScriptForDestination(dest);
+
+                coinstake.vin.emplace_back(coin.GetInputCoin().GetOutpoint());
+                coinstake.vout.emplace_back(0, CScript());
+                coinstake.vout.emplace_back(balance + GetBlockSubsidy(tipHeight + 1, ::Params().GetConsensus()), stakerScript);
+
+                if (!pwallet->SignTransaction(coinstake)) {
+                    LogPrintf("PoS: failed to sign coinstake transaction\n");
+                    continue;
+                }
+                }
+
+                CBlock block;
+                block.nVersion = 0x20000000 | CBlockHeader::VERSIONBITS_POS_FLAG;
+                block.hashPrevBlock = tipHash;
+                block.nTime = candidateTime;
+                block.nBits = tipStakeTarget;
+
+                CMutableTransaction coinbase;
+                coinbase.vin.emplace_back(COutPoint(), CScript() << (tipHeight + 1) << OP_0);
+                coinbase.vout.emplace_back(0, CScript());
+                block.vtx.push_back(MakeTransactionRef(coinbase));
+                block.vtx.push_back(MakeTransactionRef(coinstake));
+                GenerateCoinbaseCommitment(block, ::ChainActive().Tip(), ::Params().GetConsensus());
+
+                bool mutated;
+                block.hashMerkleRoot = BlockMerkleRoot(block, &mutated);
+
+                std::shared_ptr<const CBlock> shared_pblock = std::make_shared<const CBlock>(block);
+                bool submitOk;
+                {
+                    LOCK(g_process_new_block_mutex);
+                    submitOk = g_chainman.ProcessNewBlock(Params(), shared_pblock, true, nullptr);
+                }
+                if (submitOk) {
+                    LogPrintf("PoS: block submitted successfully, hash=%s\n", block.GetHash().ToString());
+                } else {
+                    LogPrintf("PoS: block submission FAILED\n");
+                }
+            }
+        }
+    }
+}
+
 void StartWallets(CScheduler& scheduler, const ArgsManager& args)
 {
     for (const std::shared_ptr<CWallet>& pwallet : GetWallets()) {
@@ -131,6 +241,10 @@ void StartWallets(CScheduler& scheduler, const ArgsManager& args)
         scheduler.scheduleEvery(MaybeCompactWalletDB, std::chrono::milliseconds{500});
     }
     scheduler.scheduleEvery(MaybeResendWalletTxs, std::chrono::milliseconds{1000});
+
+    // PoS: check for a valid stake roughly every STAKE_TIMESTAMP_MASK
+    // seconds, matching the granularity of nTimeTx candidates.
+    scheduler.scheduleEvery(TryStakeAllWallets, std::chrono::milliseconds{8000});
 }
 
 void FlushWallets()

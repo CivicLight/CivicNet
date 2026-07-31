@@ -180,6 +180,24 @@ public:
     uint256 hashMerkleRoot{};
     uint32_t nTime{0};
     uint32_t nBits{0};
+
+    //! PoS: stake modifier active for this block (updated at H-block
+    //! boundaries) and the PoS difficulty target, mirroring nBits' role.
+    uint256 nStakeModifier{};
+    uint32_t nStakeTarget{0};
+
+    //! Height of the most recent PoS block in this chain (-1 if none yet).
+    //! Used to enforce the anti-clustering rule (min N PoW blocks between
+    //! consecutive PoS blocks).
+    int nLastPoSHeight{-1};
+    //! PoS: current target ratio (basis points, e.g. 500 = 5%) of blocks
+    //! that should be PoS, adjusted every STAKE_RATIO_WINDOW_BLOCKS blocks
+    //! via AdjustPoSRatio() based on actual vs. target PoS production.
+    //! Feeds into the PoS target retarget as the target spacing.
+    int nPoSRatioBps{0};
+    //! PoS: count of PoS blocks seen since the start of the current
+    //! STAKE_RATIO_WINDOW_BLOCKS window, reset at each window boundary.
+    int nPoSCountInWindow{0};
     uint32_t nNonce{0};
 
     //! MWEB data (only populated when BLOCK_HAVE_MWEB is set)
@@ -367,6 +385,13 @@ public:
         READWRITE(obj.nTime);
         READWRITE(obj.nBits);
         READWRITE(obj.nNonce);
+
+        // PoS: persist stake modifier/target so they survive node restarts
+        READWRITE(obj.nStakeModifier);
+        READWRITE(obj.nStakeTarget);
+        READWRITE(obj.nLastPoSHeight);
+        READWRITE(obj.nPoSRatioBps);
+        READWRITE(obj.nPoSCountInWindow);
     }
 
     uint256 GetBlockHash() const

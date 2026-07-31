@@ -63,6 +63,15 @@ public:
     // algorithm; blocks at/after this use the ASIC-resistant civiclight v2.
     static const uint32_t CIVICLIGHT_V2_ACTIVATION_TIME = 1784797200;
 
+    // Hybrid PoW+PoS: bit 16 of nVersion marks a block as Proof-of-Stake.
+    // This flag alone is not trusted by consensus -- it must be validated
+    // against a matching coinstake transaction structure (vtx[1]).
+    static const int32_t VERSIONBITS_POS_FLAG = (1 << 16);
+
+    bool IsProofOfStake() const {
+        return (nVersion & VERSIONBITS_POS_FLAG) != 0;
+    }
+
     uint256 GetPoWHash() const
     {
         uint256 thash;

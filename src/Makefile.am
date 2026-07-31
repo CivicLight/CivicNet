@@ -374,6 +374,8 @@ libbitcoin_server_a_SOURCES = \
   policy/rbf.cpp \
   policy/settings.cpp \
   pow.cpp \
+  pos_kernel.cpp \
+  pos_coinstake.cpp \
   rest.cpp \
   rpc/blockchain.cpp \
   rpc/mining.cpp \
