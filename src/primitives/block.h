@@ -67,9 +67,18 @@ public:
     // This flag alone is not trusted by consensus -- it must be validated
     // against a matching coinstake transaction structure (vtx[1]).
     static const int32_t VERSIONBITS_POS_FLAG = (1 << 16);
+    // PoS activation gate: before this time, IsProofOfStake() always
+    // returns false regardless of the version bit -- any block claiming
+    // to be PoS before activation is therefore treated as an ordinary PoW
+    // block by every downstream check (CheckBlock, ConnectBlock,
+    // ReadBlockFromDisk's PoW-check skip, etc.) and will be rejected
+    // unless it also happens to satisfy real proof-of-work, which a real
+    // PoS-kernel-derived block will not. This is the single chokepoint
+    // gating hybrid PoW+PoS activation across the whole codebase.
+    static const uint32_t POS_ACTIVATION_TIME = 1785834000; // 2026-08-04 09:00:00 UTC
 
     bool IsProofOfStake() const {
-        return (nVersion & VERSIONBITS_POS_FLAG) != 0;
+        return nTime >= POS_ACTIVATION_TIME && (nVersion & VERSIONBITS_POS_FLAG) != 0;
     }
 
     uint256 GetPoWHash() const

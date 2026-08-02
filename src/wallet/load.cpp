@@ -128,6 +128,16 @@ bool LoadWallets(interfaces::Chain& chain)
 
 static void TryStakeAllWallets()
 {
+    // PoS: skip staking entirely during initial block download or a manual
+    // block-generation pass -- submitting/writing blocks while the chain
+    // itself is still catching up (or being manually extended) is what
+    // caused the historical block-file corruption bugs on this project.
+    if (::ChainstateActive().IsInitialBlockDownload()) return;
+    // PoS: don't bother attempting kernel-finding/block submission before
+    // the network-wide activation time -- IsProofOfStake() already rejects
+    // such blocks at the consensus layer, so this is purely to avoid
+    // wasted CPU and log spam before activation.
+    if ((uint32_t)GetAdjustedTime() < CBlockHeader::POS_ACTIVATION_TIME) return;
     uint256 tipStakeModifier;
     uint32_t tipStakeTarget;
     uint32_t tipTime;

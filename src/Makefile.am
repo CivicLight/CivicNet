@@ -736,7 +736,7 @@ civicnet_wallet_SOURCES = bitcoin-wallet.cpp
 civicnet_wallet_CPPFLAGS = $(litecoin_bin_cppflags)
 civicnet_wallet_CXXFLAGS = $(litecoin_bin_cxxflags)
 civicnet_wallet_LDFLAGS = $(litecoin_bin_ldflags)
-civicnet_wallet_LDADD = $(LIBBITCOIN_WALLET_TOOL) $(litecoin_bin_ldadd)
+civicnet_wallet_LDADD = $(LIBBITCOIN_WALLET_TOOL) $(LIBBITCOIN_SERVER) $(litecoin_bin_ldadd) $(LIBBITCOIN_SERVER) $(litecoin_bin_ldadd)
 
 if TARGET_WINDOWS
 civicnet_wallet_SOURCES += bitcoin-wallet-res.rc
