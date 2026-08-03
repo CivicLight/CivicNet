@@ -57,6 +57,22 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].bit = 28;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nStartTime = 1199145601;
         consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout = 1230767999;
+        // BUG FIX (found during PoS testing, not in the original 10-item
+        // report): DEPLOYMENT_TAPROOT and DEPLOYMENT_MWEB were declared in
+        // consensus/params.h but never explicitly configured here, leaving
+        // their .bit/.nStartTime/.nTimeout fields uninitialized. This
+        // caused ComputeBlockVersion() to signal a garbage bit on every
+        // regular block -- which happened to collide with
+        // VERSIONBITS_POS_FLAG (bit 16), making every PoW block
+        // misidentified as a PoS block. Explicitly disabling both closes
+        // the collision and matches the Low 10 finding that MWEB has no
+        // real deployment parameters set.
+        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].bit = 2;
+        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nStartTime = Consensus::BIP9Deployment::NEVER_ACTIVE;
+        consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nTimeout = Consensus::BIP9Deployment::NEVER_ACTIVE;
+        consensus.vDeployments[Consensus::DEPLOYMENT_MWEB].bit = 3;
+        consensus.vDeployments[Consensus::DEPLOYMENT_MWEB].nStartTime = Consensus::BIP9Deployment::NEVER_ACTIVE;
+        consensus.vDeployments[Consensus::DEPLOYMENT_MWEB].nTimeout = Consensus::BIP9Deployment::NEVER_ACTIVE;
 
         nDefaultPort = 9333;
         pchMessageStart[0] = 0xc1;
@@ -86,7 +102,7 @@ public:
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x88, 0xAD, 0xE4};
 
         bech32_hrp = "civc";
-        vFixedSeeds = std::vector<uint8_t>(std::begin(chainparams_seed_main), std::end(chainparams_seed_main));
+        // vFixedSeeds intentionally left empty - seedless during MWEB cleanup
 
         fDefaultConsistencyChecks = false;
         fRequireStandard = true;

@@ -11,7 +11,7 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
     assert(pindexLast != nullptr);
     unsigned int nProofOfWorkLimit = UintToArith256(params.powLimit).GetCompact();
 
-    // Jangan ubah kesulitan jika ini adalah Blok #0 (Genesis) atau Blok #1
+    // Don't adjust difficulty if this is Block #0 (Genesis) or Block #1
     if (pindexLast->nHeight <= 1) {
         return nProofOfWorkLimit;
     }
@@ -26,16 +26,32 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
         return nProofOfWorkLimit;
     }
 
-    const CBlockIndex* pindexFirst = pindexLast->pprev;
-    if (pindexFirst == nullptr) return nProofOfWorkLimit;
+    // SECURITY FIX (Medium 9): a single-block retarget window is
+    // trivially influenced by timestamp manipulation and can't respond to
+    // real hashrate changes at any useful speed -- this was the root cause
+    // of the multi-hour stall at block 4794 (see CHANGELOG, July 23).
+    // Average over a RETARGET_WINDOW-block span instead (50, matching our
+    // coinbase maturity confirmation count), walking back as many blocks
+    // as actually exist if the chain is younger than that.
+    static const int RETARGET_WINDOW = 50;
+    int nBlocksBack = RETARGET_WINDOW;
+    const CBlockIndex* pindexFirst = pindexLast;
+    for (int i = 0; i < nBlocksBack && pindexFirst->pprev != nullptr; i++) {
+        pindexFirst = pindexFirst->pprev;
+    }
+    if (pindexFirst == pindexLast) return nProofOfWorkLimit; // not enough history yet
+    int nActualBlocks = pindexLast->nHeight - pindexFirst->nHeight;
 
-    // Hitung jarak waktu pengerjaan blok nyata dibanding target (1 menit / 60 detik)
+    // Compute the actual timespan versus the target for that many blocks
     int64_t nActualTimespan = pindexLast->GetBlockTime() - pindexFirst->GetBlockTime();
-    int64_t nTargetSpacing = params.nPowTargetSpacing; // 60 detik
+    int64_t nTargetSpacing = params.nPowTargetSpacing * (int64_t)nActualBlocks;
 
-    // Batasi perubahan ekstrem agar tidak melompat terlalu liar (Maksimal naik/turun 8%)
-    if (nActualTimespan < nTargetSpacing / 1.08) nActualTimespan = nTargetSpacing / 1.08;
-    if (nActualTimespan > nTargetSpacing * 1.08) nActualTimespan = nTargetSpacing * 1.08;
+    // Clamp extreme swings so the adjustment doesn't jump too wildly (max +/-8%)
+    // SECURITY FIX (High 6): floating point is not guaranteed bit-identical
+    // across compilers/libm/architectures in a consensus-critical path.
+    // Use exact rational arithmetic instead (27/25 == 1.08 exactly).
+    if (nActualTimespan < nTargetSpacing * 25 / 27) nActualTimespan = nTargetSpacing * 25 / 27;
+    if (nActualTimespan > nTargetSpacing * 27 / 25) nActualTimespan = nTargetSpacing * 27 / 25;
 
     arith_uint256 bnNew;
     bnNew.SetCompact(pindexLast->nBits);

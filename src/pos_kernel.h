@@ -4,6 +4,8 @@
 #include <uint256.h>
 #include <arith_uint256.h>
 #include <cstdint>
+class CBlockIndex;
+class CBlockHeader;
 
 // Compute the next stake modifier deterministically from chain state.
 // previousModifier: the modifier from the last update boundary
@@ -82,6 +84,14 @@ uint256 GetInitialStakeModifier(const uint256& genesisHash, uint32_t genesisTime
 // PoS target adjustment: mirrors the proven PoW retarget pattern
 // (+/-8% bound per adjustment) applied to actual vs target time between
 // consecutive PoS blocks, rather than a novel untested mechanism.
+// SECURITY FIX (Critical 2): computes what nStakeTarget SHOULD be for the
+// next block, using pindexPrev (available at header-validation time, before
+// the new block's index entry exists) -- mirrors the target-only portion of
+// the logic in validation.cpp's block-index-building step. Used to reject
+// PoS blocks whose header nBits doesn't match this value, closing the
+// unvalidated-nBits -> forged-chainwork -> arbitrary-reorg hole.
+uint32_t ComputeExpectedStakeTarget(const CBlockIndex* pindexPrev, const CBlockHeader& block);
+
 arith_uint256 GetNextStakeTarget(const arith_uint256& currentTarget,
                                   int64_t actualSpacing,
                                   int64_t targetSpacing,

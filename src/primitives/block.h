@@ -66,7 +66,13 @@ public:
     // Hybrid PoW+PoS: bit 16 of nVersion marks a block as Proof-of-Stake.
     // This flag alone is not trusted by consensus -- it must be validated
     // against a matching coinstake transaction structure (vtx[1]).
-    static const int32_t VERSIONBITS_POS_FLAG = (1 << 16);
+    // Bit 27 chosen deliberately: bits 29-31 are reserved by
+    // VERSIONBITS_TOP_MASK/TOP_BITS (using them breaks standard BIP9
+    // version parsing), and bit 16 previously collided with an
+    // uninitialized deployment slot. Bit 27 sits away from currently
+    // assigned deployment bits (TESTDUMMY=28, TAPROOT=2, MWEB=3) -- this
+    // bit must never be assigned to any future BIP9 deployment.
+    static const int32_t VERSIONBITS_POS_FLAG = (1 << 27);
     // PoS activation gate: before this time, IsProofOfStake() always
     // returns false regardless of the version bit -- any block claiming
     // to be PoS before activation is therefore treated as an ordinary PoW
@@ -115,6 +121,15 @@ public:
 
     MWEB::Block mweb_block;
 
+    // SECURITY FIX (Medium 7): signature over the block hash, made by the
+    // staker's key (the same key controlling the coinstake's kernel
+    // input). Without this, anyone who observes a valid PoS block can
+    // rebuild a different block around the same coinstake transaction --
+    // the coinstake's own signature only covers itself, not the block it
+    // ends up in. Empty for PoW blocks. Mirrors Peercoin/Blackcoin's
+    // vchBlockSig.
+    std::vector<unsigned char> vchBlockSig;
+
     CBlock()
     {
         SetNull();
@@ -130,6 +145,7 @@ public:
     {
         READWRITEAS(CBlockHeader, obj);
         READWRITE(obj.vtx);
+        READWRITE(obj.vchBlockSig);
         if (!(s.GetVersion() & SERIALIZE_NO_MWEB)) {
             if (obj.vtx.size() >= 2 && obj.vtx.back()->IsHogEx()) {
                 READWRITE(obj.mweb_block);

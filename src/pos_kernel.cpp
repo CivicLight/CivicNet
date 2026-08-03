@@ -2,6 +2,9 @@
 #include <hash.h>
 #include <crypto/sha256.h>
 #include <cmath>
+#include <chain.h>
+#include <primitives/block.h>
+#include <chainparams.h>
 
 uint256 ComputeStakeModifier(const uint256& previousModifier,
                               const uint256& referenceHash,
@@ -28,8 +31,26 @@ bool CheckStakeKernel(const uint256& stakeModifier,
     uint256 kernelHash = ss.GetHash();
 
     // weight = sqrt(balance), scaled to keep integer precision reasonable
+    // SECURITY FIX (High 5): arith_uint256 multiplication wraps silently
+    // mod 2^256. With the initial target near 2^236, target*weight could
+    // overflow once sqrt(balance) gets large enough, wrapping to a SMALL
+    // value and making the anti-whale mechanism behave erratically right
+    // in the balance range it's meant to protect. Detect the overflow via
+    // division before multiplying, and clamp to the max representable
+    // value instead of wrapping.
     double weight = std::sqrt((double)balance);
-    arith_uint256 scaledTarget = target * (uint64_t)weight;
+    uint64_t weightInt = (uint64_t)weight;
+    arith_uint256 scaledTarget;
+    if (weightInt <= 1) {
+        scaledTarget = target;
+    } else {
+        arith_uint256 maxUint256 = ~arith_uint256(0);
+        if (target > maxUint256 / weightInt) {
+            scaledTarget = maxUint256; // would overflow -- clamp, don't wrap
+        } else {
+            scaledTarget = target * weightInt;
+        }
+    }
 
     return UintToArith256(kernelHash) < scaledTarget;
 }
@@ -101,8 +122,12 @@ arith_uint256 GetNextStakeTarget(const arith_uint256& currentTarget,
                                   int64_t targetSpacing,
                                   const arith_uint256& maxTarget)
 {
-    if (actualSpacing < targetSpacing / 1.08) actualSpacing = (int64_t)(targetSpacing / 1.08);
-    if (actualSpacing > targetSpacing * 1.08) actualSpacing = (int64_t)(targetSpacing * 1.08);
+    // SECURITY FIX (High 6): floating point is not guaranteed bit-identical
+    // across compilers/libm/architectures in a consensus-critical path --
+    // two honest nodes could disagree on block validity. Use exact
+    // rational arithmetic instead (27/25 == 1.08 exactly).
+    if (actualSpacing < targetSpacing * 25 / 27) actualSpacing = targetSpacing * 25 / 27;
+    if (actualSpacing > targetSpacing * 27 / 25) actualSpacing = targetSpacing * 27 / 25;
 
     arith_uint256 newTarget = currentTarget;
     newTarget *= (uint64_t)actualSpacing;
@@ -111,4 +136,32 @@ arith_uint256 GetNextStakeTarget(const arith_uint256& currentTarget,
     if (newTarget > maxTarget) newTarget = maxTarget;
 
     return newTarget;
+}
+
+uint32_t ComputeExpectedStakeTarget(const CBlockIndex* pindexPrev, const CBlockHeader& block)
+{
+    if (pindexPrev == nullptr) {
+        return 0; // genesis; no PoS block is ever validated here
+    }
+    uint32_t baseTarget;
+    if (pindexPrev->nStakeTarget == 0) {
+        baseTarget = 0x1e0ffff0; // powLimit-equivalent compact bits (matches AddToBlockIndex's init case)
+    } else {
+        baseTarget = pindexPrev->nStakeTarget;
+    }
+    if (baseTarget != 0 && pindexPrev->nLastPoSHeight >= 0) {
+        const CBlockIndex* prevPoSBlock = pindexPrev->GetAncestor(pindexPrev->nLastPoSHeight);
+        if (prevPoSBlock != nullptr) {
+            int64_t actualSpacing = (int64_t)block.nTime - (int64_t)prevPoSBlock->nTime;
+            int ratioBps = pindexPrev->nPoSRatioBps > 0 ? pindexPrev->nPoSRatioBps : STAKE_RATIO_START_BPS;
+            int64_t targetSpacing = (int64_t)Params().GetConsensus().nPowTargetSpacing * 10000LL / ratioBps;
+            arith_uint256 currentTarget;
+            currentTarget.SetCompact(baseTarget);
+            arith_uint256 maxTarget;
+            maxTarget.SetCompact(0x1e0ffff0);
+            arith_uint256 newTarget = GetNextStakeTarget(currentTarget, actualSpacing, targetSpacing, maxTarget);
+            return newTarget.GetCompact();
+        }
+    }
+    return baseTarget;
 }

@@ -144,10 +144,15 @@ static void TryStakeAllWallets()
     uint256 tipHash;
     int tipHeight;
     uint32_t tipMedianTimePast;
+    // CONSISTENCY FIX support: captured in the outer scope so it survives
+    // past the cs_main lock block, for use with ComputeExpectedStakeTarget
+    // further down when constructing the candidate block.
+    CBlockIndex* capturedTip = nullptr;
     {
         LOCK(cs_main);
         CBlockIndex* tip = ::ChainActive().Tip();
         if (tip == nullptr) return;
+        capturedTip = tip;
         tipStakeModifier = tip->nStakeModifier;
         tipStakeTarget = tip->nStakeTarget;
         tipTime = (uint32_t)tip->nTime;
@@ -189,6 +194,10 @@ static void TryStakeAllWallets()
                 LogPrintf("PoS: valid stake kernel found for wallet %s, amount=%d, nTimeTx=%u\n", pwallet->GetName(), balance, candidateTime);
 
                 CMutableTransaction coinstake;
+                // SECURITY FIX (Medium 7) support: captured in the outer
+                // scope so it survives past the cs_wallet lock block below,
+                // for use when signing the finished block further down.
+                CTxDestination stakerDest;
                 {
                     LOCK(pwallet->cs_wallet);
                 CTxDestination dest;
@@ -196,6 +205,7 @@ static void TryStakeAllWallets()
                     LogPrintf("PoS: could not extract destination for coinstake output\n");
                     continue;
                 }
+                stakerDest = dest;
                 CScript stakerScript = GetScriptForDestination(dest);
 
                 coinstake.vin.emplace_back(coin.GetInputCoin().GetOutpoint());
@@ -212,7 +222,15 @@ static void TryStakeAllWallets()
                 block.nVersion = 0x20000000 | CBlockHeader::VERSIONBITS_POS_FLAG;
                 block.hashPrevBlock = tipHash;
                 block.nTime = candidateTime;
-                block.nBits = tipStakeTarget;
+                // CONSISTENCY FIX: use the same computation the validator
+                // uses (ComputeExpectedStakeTarget), not a raw copy of the
+                // chain's current stake target. These only coincidentally
+                // matched so far because no real PoS block has occurred yet
+                // (nLastPoSHeight == -1, so the validator's retarget branch
+                // never triggers) -- once staking has been live for a
+                // while, a raw copy here would start disagreeing with what
+                // the validator expects.
+                block.nBits = ComputeExpectedStakeTarget(capturedTip, block);
 
                 CMutableTransaction coinbase;
                 coinbase.vin.emplace_back(COutPoint(), CScript() << (tipHeight + 1) << OP_0);
@@ -224,6 +242,34 @@ static void TryStakeAllWallets()
                 bool mutated;
                 block.hashMerkleRoot = BlockMerkleRoot(block, &mutated);
 
+                // SECURITY FIX (Medium 7): sign the block hash with the
+                // staker's own key -- the same key controlling the
+                // coinstake's kernel input. Without this, the coinstake tx
+                // alone doesn't bind to any specific block, and anyone
+                // observing a valid PoS block could rebuild a different
+                // block around the same coinstake transaction.
+                {
+                    CKeyID keyID;
+                if (const PKHash* pkhash = boost::get<PKHash>(&stakerDest)) {
+                    keyID = ToKeyID(*pkhash);
+                } else if (const WitnessV0KeyHash* witnessID = boost::get<WitnessV0KeyHash>(&stakerDest)) {
+                    keyID = CKeyID();
+                    std::copy(witnessID->begin(), witnessID->end(), keyID.begin());
+                } else {
+                    LogPrintf("PoS: unsupported address type for block signature\n");
+                    continue;
+                }
+                    CKey stakerKey;
+                    if (!pwallet->GetLegacyScriptPubKeyMan()->GetKey(keyID, stakerKey)) {
+                        LogPrintf("PoS: failed to get staker key for block signature\n");
+                        continue;
+                    }
+                    uint256 blockHashToSign = block.GetHash();
+                    if (!stakerKey.SignCompact(blockHashToSign, block.vchBlockSig)) {
+                        LogPrintf("PoS: failed to sign block\n");
+                        continue;
+                    }
+                }
                 std::shared_ptr<const CBlock> shared_pblock = std::make_shared<const CBlock>(block);
                 bool submitOk;
                 {

@@ -2213,6 +2213,11 @@ bool CChainState::ConnectBlock(const CBlock& block, BlockValidationState& state,
     blockundo.vtxundo.reserve(block.vtx.size() - 1);
     CAmount capturedStakerBalance = 0;
     int capturedStakerHeight = 0;
+    // SECURITY FIX (Medium 7) support: captured here (before the
+    // coinstake spends this input) since view.AccessCoin() on an
+    // already-spent input later would either fail or hit an assert --
+    // this mirrors how capturedStakerBalance itself is captured below.
+    CTxDestination capturedKernelDest = CNoDestination();
     for (unsigned int i = 0; i < block.vtx.size(); i++)
     {
         const CTransaction &tx = *(block.vtx[i]);
@@ -2267,6 +2272,7 @@ bool CChainState::ConnectBlock(const CBlock& block, BlockValidationState& state,
             }
             capturedStakerBalance = stakerCoinPre.out.nValue;
             capturedStakerHeight = stakerCoinPre.nHeight;
+            ExtractDestination(stakerCoinPre.out.scriptPubKey, capturedKernelDest);
         }
 
         // GetTransactionSigOpCost counts 3 types of sigops:
@@ -2308,6 +2314,16 @@ bool CChainState::ConnectBlock(const CBlock& block, BlockValidationState& state,
         LogPrintf("ERROR: ConnectBlock(): coinbase pays too much (actual=%d vs limit=%d)\n", block.vtx[0]->GetValueOut(), blockReward);
         return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-cb-amount");
     }
+    // SECURITY FIX (Critical 3): coinstake (vtx[1]) carries the full reward
+    // in PoS blocks -- coinbase (vtx[0]) must pay nothing, or emission
+    // doubles on every PoS block (coinbase up to blockReward AND coinstake
+    // up to stakerBalance + blockReward, simultaneously). This was
+    // previously unenforced; only the per-block ceiling above was checked,
+    // regardless of PoW/PoS.
+    if (block.IsProofOfStake() && block.vtx[0]->GetValueOut() != 0) {
+        LogPrintf("ERROR: ConnectBlock(): PoS block coinbase must pay nothing (actual=%d)\n", block.vtx[0]->GetValueOut());
+        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-cb-amount");
+    }
 
     // PoS blocks: coinstake (vtx[1]) carries the full reward instead of
     // the coinbase. vout[1] payout must not exceed staker's original
@@ -2320,12 +2336,46 @@ bool CChainState::ConnectBlock(const CBlock& block, BlockValidationState& state,
         if (!CanBeProofOfStake(pindex->nHeight, lastPoSHeight)) {
             return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-cs-clustering", "PoS block too close to the previous PoS block");
         }
-        const CTxOut& stakePayout = block.vtx[1]->vout[1];
         const COutPoint& kernelInput = block.vtx[1]->vin[0].prevout;
         CAmount stakerBalance = capturedStakerBalance;
-        if (stakePayout.nValue > stakerBalance + blockReward) {
-            LogPrintf("ERROR: ConnectBlock(): coinstake pays too much (actual=%d vs limit=%d)\n", stakePayout.nValue, stakerBalance + blockReward);
+        // SECURITY FIX: sum ALL coinstake outputs (excluding vout[0], the
+        // empty marker output), not just vout[1] -- a coinstake with extra
+        // outputs (vout[2], vout[3], ...) paying arbitrary amounts to the
+        // staker's own address previously passed this check unchecked,
+        // allowing unbounded inflation. Every output must be accounted for.
+        CAmount totalStakePayout = 0;
+        for (size_t k = 1; k < block.vtx[1]->vout.size(); k++) {
+            totalStakePayout += block.vtx[1]->vout[k].nValue;
+        }
+        if (totalStakePayout > stakerBalance + blockReward) {
+            LogPrintf("ERROR: ConnectBlock(): coinstake pays too much (actual=%d vs limit=%d)\n", totalStakePayout, stakerBalance + blockReward);
             return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-cs-amount");
+        }
+        // SECURITY FIX (Medium 7): verify the block signature. Without
+        // this, the coinstake transaction's own signature only covers
+        // itself -- not the block it ends up in -- so anyone who observes
+        // a valid PoS block could rebuild a different block around the
+        // same coinstake transaction. Recover the pubkey from the compact
+        // signature and require it to match the kernel input's address.
+        {
+            if (block.vchBlockSig.empty()) {
+                return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blocksig-missing", "PoS block has no signature");
+            }
+            CPubKey recoveredPubKey;
+            if (!recoveredPubKey.RecoverCompact(block.GetHash(), block.vchBlockSig)) {
+                return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blocksig-malformed", "block signature does not recover");
+            }
+            CKeyID expectedKeyID;
+            if (const PKHash* pkhash = boost::get<PKHash>(&capturedKernelDest)) {
+                expectedKeyID = ToKeyID(*pkhash);
+            } else if (const WitnessV0KeyHash* witnessID = boost::get<WitnessV0KeyHash>(&capturedKernelDest)) {
+                expectedKeyID = ToKeyID(*witnessID);
+            } else {
+                return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blocksig-nonstandard", "kernel input is not a P2PKH or P2WPKH address");
+            }
+            if (expectedKeyID != recoveredPubKey.GetID()) {
+                return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blocksig-mismatch", "block signature does not match the kernel input's address");
+            }
         }
 
         // Validate the actual PoS kernel proof: the staker must have found
@@ -3805,6 +3855,13 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, BlockValidatio
     const Consensus::Params& consensusParams = params.GetConsensus();
     if (!block.IsProofOfStake() && block.nBits != GetNextWorkRequired(pindexPrev, &block, consensusParams))
         return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, "bad-diffbits", "incorrect proof of work");
+    // SECURITY FIX (Critical 2): nBits was previously unvalidated for PoS
+    // blocks, meaning an attacker could set it to a minimal (easiest)
+    // target while chainwork is computed FROM this same field -- forging
+    // arbitrary chainwork and enabling deep reorgs. Require it to match
+    // the deterministically-computed expected stake target.
+    if (block.IsProofOfStake() && block.nBits != ComputeExpectedStakeTarget(pindexPrev, block))
+        return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, "bad-diffbits", "incorrect stake target");
 
     // Check against checkpoints
     if (fCheckpointsEnabled) {
@@ -3850,6 +3907,15 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, BlockValidatio
 static bool ContextualCheckBlock(const CBlock& block, BlockValidationState& state, const Consensus::Params& consensusParams, const CBlockIndex* pindexPrev)
 {
     const int nHeight = pindexPrev == nullptr ? 0 : pindexPrev->nHeight + 1;
+    // SECURITY FIX (High 4): IsValidStakeTimestamp() existed but was never
+    // called from consensus -- only our own staker voluntarily aligned its
+    // search to it. Without this, an attacker can grind every second in
+    // the future-time window instead of every Nth (STAKE_TIMESTAMP_MASK),
+    // an easy free multiplier on top of an already low bar.
+    if (block.IsProofOfStake() && pindexPrev != nullptr &&
+        !IsValidStakeTimestamp(block.nTime, (uint32_t)pindexPrev->GetBlockTime())) {
+        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-stake-timestamp", "stake timestamp not mask-aligned or not after previous block");
+    }
 
     // Start enforcing BIP113 (Median Time Past).
     int nLockTimeFlags = 0;
