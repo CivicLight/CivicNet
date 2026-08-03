@@ -1,85 +1,92 @@
 CivicNet Core integration/staging tree
 =====================================
 
-[![Build Status](https://travis-ci.org/civicnet-project/civicnet.svg?branch=master)](https://travis-ci.org/civicnet-project/civicnet)
-
 https://civiclight.xyz/
 
 What is CivicNet?
-----------------
+------------------
+CivicNet (CIVIC) is a decentralized, community-driven cryptocurrency built
+around one core idea: mining should stay accessible to ordinary hardware,
+not become an arms race between specialized ASIC farms. CivicNet Core is
+the open-source software that runs the network — a full node, wallet, and
+consensus implementation forked from Litecoin Core 0.21.4.
 
-CivicNet is an experimental digital currency that enables instant payments to
-anyone, anywhere in the world. CivicNet uses peer-to-peer technology to operate
-with no central authority: managing transactions and issuing money are carried
-out collectively by the network. CivicNet Core is the name of open source
-software which enables the use of this currency.
+CivicNet uses **civiclight**, a memory-hard, CPU-mineable proof-of-work
+algorithm. The network hard-forked to civiclight v2 on July 23, 2026 to
+close an ASIC-resistance gap identified in the original algorithm — see
+[CHANGELOG.md](CHANGELOG.md) for the full history of network upgrades.
 
-For more information, as well as an immediately useable, binary version of
-the CivicNet Core software, see https://civiclight.xyz/.
+As of v3.0.0, CivicNet runs **Hybrid Proof-of-Work + Proof-of-Stake**
+consensus. CPU mining and staking both produce blocks on the same chain:
+
+- No minimum balance, no lock-up period, and no masternode tier required
+  to stake
+- Staking odds scale with the *square root* of a wallet's balance, not
+  linearly — this keeps large holders from gaining outsized influence
+- An anti-clustering rule prevents PoS blocks from crowding out mining
+- Staking is gated by a hard-coded activation timestamp; see the release
+  notes for the current network's activation date
+
+Network parameters: 60-second block time, 77 CIVIC block reward, ~315
+million CIVIC total supply cap. A 1% developer allocation (3,150,000
+CIVIC) was created at block 1 and has been publicly disclosed since
+mainnet launch, reserved for development, infrastructure, and community
+bounties.
+
+For downloads, the block explorer, and the web wallet, see
+https://civiclight.xyz/.
 
 License
 -------
-
-CivicNet Core is released under the terms of the MIT license. See [COPYING](COPYING) for more
-information or see https://opensource.org/licenses/MIT.
+CivicNet Core is released under the terms of the MIT license. See
+[COPYING](COPYING) for more information or see
+https://opensource.org/licenses/MIT.
 
 Development Process
--------------------
+--------------------
+The `master` branch is regularly built and tested, but it is not
+guaranteed to be completely stable. [Tags](https://github.com/CivicLight/CivicNet/tags)
+are created for official, stable release versions of CivicNet Core.
 
-The `master` branch is regularly built (see `doc/build-*.md` for instructions) and tested, but it is not guaranteed to be
-completely stable. [Tags](https://github.com/civicnet-project/civicnet/tags) are created
-regularly from release branches to indicate new official, stable release versions of CivicNet Core.
-
-The https://github.com/civicnet-project/gui repository is used exclusively for the
-development of the GUI. Its master branch is identical in all monotree
-repositories. Release branches and tags do not exist, so please do not fork
-that repository unless it is for development reasons.
-
-The contribution workflow is described in [CONTRIBUTING.md](CONTRIBUTING.md)
-and useful hints for developers can be found in [doc/developer-notes.md](doc/developer-notes.md).
-
-The developer [mailing list](https://groups.google.com/forum/#!forum/civicnet-dev)
-should be used to discuss complicated or controversial changes before working
-on a patch set.
-
-Developer IRC can be found on Freenode at #civicnet-dev.
+The contribution workflow is described in
+[CONTRIBUTING.md](CONTRIBUTING.md), and useful hints for developers can be
+found in [doc/developer-notes.md](doc/developer-notes.md).
 
 Testing
 -------
-
-Testing and code review is the bottleneck for development; we get more pull
-requests than we can review and test on short notice. Please be patient and help out by testing
-other people's pull requests, and remember this is a security-critical project where any mistake might cost people
-lots of money.
+Testing and code review is the bottleneck for development. Please be
+patient and help out by testing other people's pull requests, and
+remember this is a security-critical project where any mistake might cost
+people real money.
 
 ### Automated Testing
+Developers are strongly encouraged to write [unit tests](src/test/README.md)
+for new code, and to submit new unit tests for old code. Unit tests can
+be compiled and run (assuming they weren't disabled in configure) with:
+`make check`. Further details on running and extending unit tests can be
+found in [/src/test/README.md](/src/test/README.md).
 
-Developers are strongly encouraged to write [unit tests](src/test/README.md) for new code, and to
-submit new unit tests for old code. Unit tests can be compiled and run
-(assuming they weren't disabled in configure) with: `make check`. Further details on running
-and extending unit tests can be found in [/src/test/README.md](/src/test/README.md).
-
-There are also [regression and integration tests](/test), written
-in Python, that are run automatically on the build server.
-These tests can be run (if the [test dependencies](/test) are installed) with: `test/functional/test_runner.py`
-
-The Travis CI system makes sure that every pull request is built for Windows, Linux, and macOS, and that unit/sanity tests are run automatically.
+There are also [regression and integration tests](/test), written in
+Python, that can be run with: `test/functional/test_runner.py`
 
 ### Manual Quality Assurance (QA) Testing
+Changes should be tested by somebody other than the developer who wrote
+the code, especially for large or high-risk changes such as anything
+touching consensus. It's useful to add a test plan to the pull request
+description if testing the changes isn't straightforward.
 
-Changes should be tested by somebody other than the developer who wrote the
-code. This is especially important for large or high-risk changes. It is useful
-to add a test plan to the pull request description if testing the changes is
-not straightforward.
+Community
+---------
+- Website: https://civiclight.xyz
+- GitHub: https://github.com/CivicLight
+- Web Wallet: https://webwallet.civiclight.xyz
+- Block Explorer: https://explorer.civiclight.xyz
+- BitcoinTalk: see the pinned ANN thread for the latest updates
+- Telegram: https://t.me/civiclight
+- Twitter / X: https://x.com/civiclight_
 
 Translations
 ------------
-
-We only accept translation fixes that are submitted through [Bitcoin Core's Transifex page](https://explore.transifex.com/bitcoin/bitcoin/).
-Translations are converted to CivicNet periodically.
-
-Translations are periodically pulled from Transifex and merged into the git repository. See the
-[translation process](doc/translation_process.md) for details on how this works.
-
-**Important**: We do not accept translation changes as GitHub pull requests because the next
-pull from Transifex would automatically overwrite them again.
+CivicNet does not currently run a dedicated translation platform.
+Translation contributions are welcome as pull requests against the
+`locale`/`qt/locale` files directly.
