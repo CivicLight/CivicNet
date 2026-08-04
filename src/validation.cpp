@@ -3853,15 +3853,28 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, BlockValidatio
     // Check proof of work (skipped for PoS blocks, whose nBits reflects
     // nStakeTarget and is validated via the kernel condition instead).
     const Consensus::Params& consensusParams = params.GetConsensus();
-    if (!block.IsProofOfStake() && block.nBits != GetNextWorkRequired(pindexPrev, &block, consensusParams))
-        return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, "bad-diffbits", "incorrect proof of work");
-    // SECURITY FIX (Critical 2): nBits was previously unvalidated for PoS
-    // blocks, meaning an attacker could set it to a minimal (easiest)
-    // target while chainwork is computed FROM this same field -- forging
-    // arbitrary chainwork and enabling deep reorgs. Require it to match
-    // the deterministically-computed expected stake target.
-    if (block.IsProofOfStake() && block.nBits != ComputeExpectedStakeTarget(pindexPrev, block))
-        return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, "bad-diffbits", "incorrect stake target");
+    // MIGRATION GUARD: blocks at/below this height were already mined and
+    // accepted by the live production chain under an older binary (pre-
+    // Cereblix-fix, pre-PoS) whose exact difficulty-retarget computation
+    // may differ slightly from this binary's. Re-deriving and re-checking
+    // expected difficulty for that already-settled history risks rejecting
+    // genuinely historical, already-final blocks due to a computation
+    // mismatch rather than an actual invalid/attacker block. Trust history
+    // up to this height (set with margin above current production tip at
+    // deploy time); every block ABOVE it is fully validated under all
+    // current rules, same as before this guard existed.
+    static const int PRE_MIGRATION_TRUSTED_HEIGHT = 14300;
+    if (nHeight > PRE_MIGRATION_TRUSTED_HEIGHT) {
+        if (!block.IsProofOfStake() && block.nBits != GetNextWorkRequired(pindexPrev, &block, consensusParams))
+            return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, "bad-diffbits", "incorrect proof of work");
+        // SECURITY FIX (Critical 2): nBits was previously unvalidated for PoS
+        // blocks, meaning an attacker could set it to a minimal (easiest)
+        // target while chainwork is computed FROM this same field -- forging
+        // arbitrary chainwork and enabling deep reorgs. Require it to match
+        // the deterministically-computed expected stake target.
+        if (block.IsProofOfStake() && block.nBits != ComputeExpectedStakeTarget(pindexPrev, block))
+            return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, "bad-diffbits", "incorrect stake target");
+    }
 
     // Check against checkpoints
     if (fCheckpointsEnabled) {

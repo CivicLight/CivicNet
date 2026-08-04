@@ -141,11 +141,27 @@ public:
         *(static_cast<CBlockHeader*>(this)) = header;
     }
 
+    // EMERGENCY FIX: originally set to a fixed deploy-time epoch, but that
+    // incorrectly assumed the whole network would "upgrade" the moment our
+    // clock passed it -- external miners still on old (pre-vchBlockSig)
+    // binaries kept sending the old wire format regardless, causing our
+    // node to misparse their headers (CDataStream end-of-data exceptions)
+    // and fall behind the real chain. Correct fix: tie this to
+    // POS_ACTIVATION_TIME itself -- no block anywhere on the network can
+    // legitimately be PoS (and therefore need a real, non-empty signature)
+    // before that gate opens, so it's always safe/correct to omit the
+    // field entirely until then, matching what every other current node
+    // on the network already does.
+    static const uint32_t VCHBLOCKSIG_FORMAT_TIME = POS_ACTIVATION_TIME;
     SERIALIZE_METHODS(CBlock, obj)
     {
         READWRITEAS(CBlockHeader, obj);
         READWRITE(obj.vtx);
-        READWRITE(obj.vchBlockSig);
+        if (obj.nTime >= VCHBLOCKSIG_FORMAT_TIME) {
+            READWRITE(obj.vchBlockSig);
+        } else {
+            SER_READ(obj, obj.vchBlockSig.clear());
+        }
         if (!(s.GetVersion() & SERIALIZE_NO_MWEB)) {
             if (obj.vtx.size() >= 2 && obj.vtx.back()->IsHogEx()) {
                 READWRITE(obj.mweb_block);

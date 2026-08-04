@@ -3847,7 +3847,9 @@ void PeerManager::ProcessMessage(CNode& pfrom, const std::string& msg_type, CDat
         for (unsigned int n = 0; n < nCount; n++) {
             vRecv >> headers[n];
             ReadCompactSize(vRecv); // ignore tx count; assume it is 0.
-            ReadCompactSize(vRecv); // ignore vchBlockSig count; assume it is 0 (Medium 7 PoS field, empty on header-only placeholders).
+            if (headers[n].nTime >= CBlock::VCHBLOCKSIG_FORMAT_TIME) {
+                ReadCompactSize(vRecv); // ignore vchBlockSig count; assume it is 0 (Medium 7 PoS field, empty on header-only placeholders) -- only present for headers at/after the migration cutover.
+            }
         }
 
         return ProcessHeadersMessage(pfrom, headers, /*via_compact_block=*/false);
