@@ -106,6 +106,7 @@ public:
     static constexpr int SHORTTXIDS_LENGTH = 6;
 
     CBlockHeader header;
+    std::vector<unsigned char> vchBlockSig;
     MWEB::Block mweb_block;
 
     // Dummy for deserialization
@@ -121,7 +122,7 @@ public:
     {
         const bool fAllowMWEB = !(s.GetVersion() & SERIALIZE_NO_MWEB);
 		
-        READWRITE(obj.header, obj.nonce, Using<VectorFormatter<CustomUintFormatter<SHORTTXIDS_LENGTH>>>(obj.shorttxids), obj.prefilledtxn);
+        READWRITE(obj.header, obj.vchBlockSig, obj.nonce, Using<VectorFormatter<CustomUintFormatter<SHORTTXIDS_LENGTH>>>(obj.shorttxids), obj.prefilledtxn);
         if (fAllowMWEB) {
             READWRITE(obj.mweb_block);
         }
@@ -142,6 +143,7 @@ protected:
     const CTxMemPool* pool;
 public:
     CBlockHeader header;
+    std::vector<unsigned char> vchBlockSig;
     MWEB::Block mweb_block;
 
     // Can be overriden for testing
