@@ -118,6 +118,13 @@
     </layout>
    </item>
    <item>
+    <widget class="QCheckBox" name="unlockStakingCheckBox">
+     <property name="text">
+      <string>For staking only (spending will remain locked)</string>
+     </property>
+    </widget>
+   </item>
+   <item>
     <widget class="QDialogButtonBox" name="buttonBox">
      <property name="orientation">
       <enum>Qt::Horizontal</enum>

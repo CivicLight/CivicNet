@@ -315,6 +315,8 @@ void BitcoinGUI::createActions()
     encryptWalletAction = new QAction(tr("&Encrypt Wallet..."), this);
     encryptWalletAction->setStatusTip(tr("Encrypt the private keys that belong to your wallet"));
     encryptWalletAction->setCheckable(true);
+    unlockWalletAction = new QAction(tr("&Unlock Wallet..."), this);
+    unlockWalletAction->setStatusTip(tr("Unlock wallet (e.g. for staking only)"));
     backupWalletAction = new QAction(tr("&Backup Wallet..."), this);
     backupWalletAction->setStatusTip(tr("Backup wallet to another location"));
     changePassphraseAction = new QAction(tr("&Change Passphrase..."), this);
@@ -380,6 +382,7 @@ void BitcoinGUI::createActions()
     if(walletFrame)
     {
         connect(encryptWalletAction, &QAction::triggered, walletFrame, &WalletFrame::encryptWallet);
+        connect(unlockWalletAction, &QAction::triggered, walletFrame, &WalletFrame::unlockWallet);
         connect(backupWalletAction, &QAction::triggered, walletFrame, &WalletFrame::backupWallet);
         connect(changePassphraseAction, &QAction::triggered, walletFrame, &WalletFrame::changePassphrase);
         connect(signMessageAction, &QAction::triggered, [this]{ showNormalIfMinimized(); });
@@ -473,6 +476,7 @@ void BitcoinGUI::createMenuBar()
     if(walletFrame)
     {
         settings->addAction(encryptWalletAction);
+        settings->addAction(unlockWalletAction);
         settings->addAction(changePassphraseAction);
         settings->addSeparator();
         settings->addAction(m_mask_values_action);

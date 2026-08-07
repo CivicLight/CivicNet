@@ -366,6 +366,26 @@
               </property>
              </widget>
             </item>
+            <item row="9" column="0">
+             <widget class="QLabel" name="labelStakingText">
+              <property name="text">
+               <string>Staking:</string>
+              </property>
+             </widget>
+            </item>
+            <item row="9" column="1">
+             <widget class="QLabel" name="labelStakingStatus">
+              <property name="font">
+               <font>
+                <weight>75</weight>
+                <bold>true</bold>
+               </font>
+              </property>
+              <property name="text">
+               <string notr="true">Not staking</string>
+              </property>
+             </widget>
+            </item>
             <item row="1" column="2">
              <widget class="QLabel" name="labelWatchAvailable">
               <property name="font">

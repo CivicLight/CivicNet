@@ -3157,6 +3157,13 @@ bool CWallet::CreateTransaction(
         FeeCalculation& fee_calc_out,
         bool sign)
 {
+    // PoS: block spending entirely if the wallet was unlocked "for staking
+    // only" -- staking (TryStakeAllWallets) reads keys directly and doesn't
+    // go through CreateTransaction, so this only affects normal sends.
+    if (fWalletUnlockStakingOnly) {
+        error = _("Wallet unlocked for staking only, unable to create transaction.");
+        return false;
+    }
     int nChangePosIn = nChangePosInOut;
 
     Optional<AssembledTx> tx1 = TxAssembler(*this).AssembleTx(vecSend, coin_control, nChangePosIn, sign, error);

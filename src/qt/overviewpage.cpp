@@ -199,8 +199,23 @@ OverviewPage::~OverviewPage()
     delete ui;
 }
 
+void OverviewPage::updateStakingStatus()
+{
+    if (!walletModel) return;
+    WalletModel::EncryptionStatus status = walletModel->getEncryptionStatus();
+    bool locked = (status == WalletModel::Locked);
+    bool hasBalance = walletModel->wallet().getBalances().balance > 0;
+    if (locked) {
+        ui->labelStakingStatus->setText(tr("Not staking (wallet locked)"));
+    } else if (hasBalance) {
+        ui->labelStakingStatus->setText(tr("Staking active"));
+    } else {
+        ui->labelStakingStatus->setText(tr("Not staking (no balance)"));
+    }
+}
 void OverviewPage::setBalance(const interfaces::WalletBalances& balances)
 {
+    updateStakingStatus();
     int unit = walletModel->getOptionsModel()->getDisplayUnit();
     m_balances = balances;
     if (walletModel->wallet().isLegacy()) {
@@ -282,6 +297,7 @@ void OverviewPage::setWalletModel(WalletModel *model)
         interfaces::WalletBalances balances = wallet.getBalances();
         setBalance(balances);
         connect(model, &WalletModel::balanceChanged, this, &OverviewPage::setBalance);
+        connect(model, &WalletModel::encryptionStatusChanged, this, &OverviewPage::updateStakingStatus);
 
         connect(model->getOptionsModel(), &OptionsModel::displayUnitChanged, this, &OverviewPage::updateDisplayUnit);
 

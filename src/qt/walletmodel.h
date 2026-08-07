@@ -107,7 +107,7 @@ public:
     // Wallet encryption
     bool setWalletEncrypted(bool encrypted, const SecureString &passphrase);
     // Passphrase only needed when unlocking
-    bool setWalletLocked(bool locked, const SecureString &passPhrase=SecureString());
+    bool setWalletLocked(bool locked, const SecureString &passPhrase=SecureString(), bool stakingOnly=false);
     bool changePassphrase(const SecureString &oldPass, const SecureString &newPass);
 
     // RAI object for unlocking wallet, returned by requestUnlock()

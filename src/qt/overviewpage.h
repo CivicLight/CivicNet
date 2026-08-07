@@ -39,6 +39,7 @@ public:
 
 public Q_SLOTS:
     void setBalance(const interfaces::WalletBalances& balances);
+    void updateStakingStatus();
     void setPrivacy(bool privacy);
 
 Q_SIGNALS:

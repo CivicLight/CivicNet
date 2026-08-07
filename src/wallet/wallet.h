@@ -929,6 +929,10 @@ public:
     bool IsCrypted() const;
     bool IsLocked() const override;
     bool Lock();
+    /** PoS: true if the wallet was unlocked specifically "for staking only" --
+     *  spending (CreateTransaction) must be blocked while this is set, even
+     *  though the wallet is technically unlocked so the staking loop can run. */
+    bool fWalletUnlockStakingOnly{false};
 
     /** Interface to assert chain access */
     bool HaveChain() const { return m_chain ? true : false; }
