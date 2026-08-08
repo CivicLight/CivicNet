@@ -1,8 +1,8 @@
 package=boost
-$(package)_version=1_70_0
-$(package)_download_path=https://dl.bintray.com/boostorg/release/1.70.0/source/
+$(package)_version=1_77_0
+$(package)_download_path=https://archives.boost.io/release/1.77.0/source/
 $(package)_file_name=boost_$($(package)_version).tar.bz2
-$(package)_sha256_hash=430ae8354789de4fd19ee52f3b1f739e1fba576f0aded0897c3c2bc00fb38778
+$(package)_sha256_hash=fc9f85fc030e233142908241af7a846e60630aa7388de9a5fafb1f3a26840854
 $(package)_patches=unused_var_in_process.patch
 
 define $(package)_set_vars
