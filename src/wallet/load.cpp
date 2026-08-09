@@ -179,7 +179,18 @@ static void TryStakeAllWallets()
         pwallet->AvailableCoins(vCoins);
             }
 
+        // PoS: only attempt ONE kernel/submission per wallet per tick.
+        // Without this, a wallet with many eligible UTXOs (e.g. lots of
+        // small past staking rewards) would find a valid kernel on EVERY
+        // one of them in the same tick and submit many blocks back-to-back
+        // -- only the first can ever connect, the rest are correctly
+        // rejected as bad-cs-clustering but still cost a full block
+        // construction/signing/ProcessNewBlock cycle each, in a tight loop
+        // with no delay. On slower machines this tight loop is a likely
+        // cause of the wallet appearing to freeze during/after sync.
+        bool submittedThisTick = false;
         for (const auto& coin : vCoins) {
+            if (submittedThisTick) break;
             CAmount balance = coin.GetInputCoin().GetAmount();
             bool found = CheckStakeKernel(
                 tipStakeModifier,
@@ -276,6 +287,7 @@ static void TryStakeAllWallets()
                     LOCK(g_process_new_block_mutex);
                     submitOk = g_chainman.ProcessNewBlock(Params(), shared_pblock, true, nullptr);
                 }
+                submittedThisTick = true;
                 if (submitOk) {
                     LogPrintf("PoS: block submitted successfully, hash=%s\n", block.GetHash().ToString());
                 } else {
