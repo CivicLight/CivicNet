@@ -82,6 +82,7 @@ public:
     // PoS-kernel-derived block will not. This is the single chokepoint
     // gating hybrid PoW+PoS activation across the whole codebase.
     static const uint32_t POS_ACTIVATION_TIME = 1786266000; // 2026-08-09 09:00:00 UTC -- Hybrid PoW+PoS activation date, finalized after all known compatibility bugs (relay, storage, migration) were found and fixed.
+    static const uint32_t POW_RETARGET_FIX_ACTIVATION_TIME = 1786639191; // placeholder, will be set right before deployment
 
     bool IsProofOfStake() const {
         return nTime >= POS_ACTIVATION_TIME && (nVersion & VERSIONBITS_POS_FLAG) != 0;

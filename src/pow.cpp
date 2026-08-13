@@ -36,11 +36,38 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
     static const int RETARGET_WINDOW = 50;
     int nBlocksBack = RETARGET_WINDOW;
     const CBlockIndex* pindexFirst = pindexLast;
-    for (int i = 0; i < nBlocksBack && pindexFirst->pprev != nullptr; i++) {
-        pindexFirst = pindexFirst->pprev;
+    int nActualBlocks = 0;
+
+    // POW_RETARGET_FIX: PoS blocks are found via staking, not hashing, so
+    // their fast/slow find-times don't reflect real PoW hashrate. Including
+    // them in the retarget window causes the difficulty to overshoot.
+    // Once active, walk back counting ONLY PoW blocks toward the window --
+    // PoS blocks are skipped entirely (don't count as a step, don't count
+    // toward nActualBlocks).
+    bool fPowRetargetFixActive = (pblock != nullptr &&
+        CBlockHeader::POW_RETARGET_FIX_ACTIVATION_TIME != 0 &&
+        pblock->nTime >= (uint32_t)CBlockHeader::POW_RETARGET_FIX_ACTIVATION_TIME);
+
+    if (fPowRetargetFixActive) {
+        const CBlockIndex* p = pindexLast;
+        while (p->pprev != nullptr && nActualBlocks < nBlocksBack) {
+            p = p->pprev;
+            bool fIsPoS = (p->nTime >= CBlockHeader::POS_ACTIVATION_TIME) &&
+                          (p->nVersion & CBlockHeader::VERSIONBITS_POS_FLAG) != 0;
+            if (!fIsPoS) {
+                nActualBlocks++;
+            }
+            pindexFirst = p;
+        }
+    } else {
+        for (int i = 0; i < nBlocksBack && pindexFirst->pprev != nullptr; i++) {
+            pindexFirst = pindexFirst->pprev;
+        }
+        nActualBlocks = pindexLast->nHeight - pindexFirst->nHeight;
     }
+
     if (pindexFirst == pindexLast) return nProofOfWorkLimit; // not enough history yet
-    int nActualBlocks = pindexLast->nHeight - pindexFirst->nHeight;
+    if (nActualBlocks <= 0) return nProofOfWorkLimit; // no PoW blocks found in lookback window
 
     // Compute the actual timespan versus the target for that many blocks
     int64_t nActualTimespan = pindexLast->GetBlockTime() - pindexFirst->GetBlockTime();
