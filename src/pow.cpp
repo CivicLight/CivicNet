@@ -80,8 +80,35 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
     if (nActualTimespan < nTargetSpacing * 25 / 27) nActualTimespan = nTargetSpacing * 25 / 27;
     if (nActualTimespan > nTargetSpacing * 27 / 25) nActualTimespan = nTargetSpacing * 27 / 25;
 
+    // POW_RETARGET_FIX (part 2): pindexLast may be a PoS block, whose nBits
+    // is not a real computed PoW difficulty (PoS blocks inherit/copy nBits
+    // from an earlier PoW block instead of computing one). Basing the new
+    // difficulty on that borrowed value causes it to snap back to stale
+    // data instead of progressing from the properly-averaged window.
+    // Walk back (including pindexLast itself) to the nearest true PoW
+    // block and use ITS nBits as the base instead.
+    // SEPARATE activation gate from fPowRetargetFixActive -- this part of
+    // the fix must NOT apply retroactively to blocks mined before its own
+    // activation, or nodes validating fresh vs nodes that already had the
+    // block connected will disagree (this caused a real incident -- see
+    // CHANGELOG). Only takes effect once POW_RETARGET_FIX_V2_ACTIVATION_TIME
+    // is reached.
+    bool fBnNewBaseFixActive = (pblock != nullptr &&
+        CBlockHeader::POW_RETARGET_FIX_V2_ACTIVATION_TIME != 0 &&
+        pblock->nTime >= (uint32_t)CBlockHeader::POW_RETARGET_FIX_V2_ACTIVATION_TIME);
+    const CBlockIndex* pindexLastPoW = pindexLast;
+    if (fBnNewBaseFixActive) {
+        while (pindexLastPoW != nullptr) {
+            bool fIsPoS = (pindexLastPoW->nTime >= CBlockHeader::POS_ACTIVATION_TIME) &&
+                          (pindexLastPoW->nVersion & CBlockHeader::VERSIONBITS_POS_FLAG) != 0;
+            if (!fIsPoS) break;
+            pindexLastPoW = pindexLastPoW->pprev;
+        }
+        if (pindexLastPoW == nullptr) return nProofOfWorkLimit;
+    }
+
     arith_uint256 bnNew;
-    bnNew.SetCompact(pindexLast->nBits);
+    bnNew.SetCompact(pindexLastPoW->nBits);
     bnNew *= nActualTimespan;
     bnNew /= nTargetSpacing;
 
