@@ -522,7 +522,14 @@ static RPCHelpMan getdifficulty()
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
     LOCK(cs_main);
-    return GetDifficulty(::ChainActive().Tip());
+    const CBlockIndex* pindexDiffTip = ::ChainActive().Tip();
+    while (pindexDiffTip != nullptr) {
+        bool fIsPoS = (pindexDiffTip->nTime >= CBlockHeader::POS_ACTIVATION_TIME) &&
+                      (pindexDiffTip->nVersion & CBlockHeader::VERSIONBITS_POS_FLAG) != 0;
+        if (!fIsPoS) break;
+        pindexDiffTip = pindexDiffTip->pprev;
+    }
+    return GetDifficulty(pindexDiffTip);
 },
     };
 }

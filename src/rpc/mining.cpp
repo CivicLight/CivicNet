@@ -75,7 +75,16 @@ static UniValue GetNetworkHashPS(int lookup, int height) {
     if (minTime == maxTime)
         return 0;
 
-    arith_uint256 workDiff = pb->nChainWork - pb0->nChainWork;
+    // POS_HASHPS_FIX: sum PoW-only work over the same lookup-block range
+    // the original (pb0, pb] would have covered, skipping PoS blocks
+    // entirely since they don't reflect real PoW hashrate.
+    arith_uint256 workDiff = 0;
+    for (CBlockIndex *pw = pb; pw != pb0; pw = pw->pprev) {
+        bool fIsPoS = (pw->nTime >= CBlockHeader::POS_ACTIVATION_TIME) && (pw->nVersion & CBlockHeader::VERSIONBITS_POS_FLAG) != 0;
+        if (!fIsPoS) {
+            workDiff += GetBlockProof(*pw);
+        }
+    }
     int64_t timeDiff = maxTime - minTime;
 
     return workDiff.getdouble() / timeDiff;
@@ -440,7 +449,16 @@ static RPCHelpMan getmininginfo()
     if (BlockAssembler::m_last_block_weight) obj.pushKV("currentblockweight", *BlockAssembler::m_last_block_weight);
     if (BlockAssembler::m_last_block_mweb_weight) obj.pushKV("currentblockmwebweight", *BlockAssembler::m_last_block_mweb_weight);
     if (BlockAssembler::m_last_block_num_txs) obj.pushKV("currentblocktx", *BlockAssembler::m_last_block_num_txs);
-    obj.pushKV("difficulty",       (double)GetDifficulty(::ChainActive().Tip()));
+    // Walk back to the last true PoW block for display purposes -- PoS
+    // blocks inherit a stale nBits value, so showing it directly as
+    // "the difficulty" is misleading (looks like a huge, alarming spike).
+    const CBlockIndex* pindexDiffTip = ::ChainActive().Tip();
+    while (pindexDiffTip != nullptr) {
+        bool fIsPoS = (pindexDiffTip->nTime >= CBlockHeader::POS_ACTIVATION_TIME) &&
+                      (pindexDiffTip->nVersion & CBlockHeader::VERSIONBITS_POS_FLAG) != 0;
+        pindexDiffTip = pindexDiffTip->pprev;
+    }
+    obj.pushKV("difficulty",       (double)GetDifficulty(pindexDiffTip));
     obj.pushKV("networkhashps",    getnetworkhashps().HandleRequest(request));
     obj.pushKV("pooledtx",         (uint64_t)mempool.size());
     obj.pushKV("chain",            Params().NetworkIDString());
