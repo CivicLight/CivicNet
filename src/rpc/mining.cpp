@@ -456,6 +456,7 @@ static RPCHelpMan getmininginfo()
     while (pindexDiffTip != nullptr) {
         bool fIsPoS = (pindexDiffTip->nTime >= CBlockHeader::POS_ACTIVATION_TIME) &&
                       (pindexDiffTip->nVersion & CBlockHeader::VERSIONBITS_POS_FLAG) != 0;
+        if (!fIsPoS) break;
         pindexDiffTip = pindexDiffTip->pprev;
     }
     obj.pushKV("difficulty",       (double)GetDifficulty(pindexDiffTip));
