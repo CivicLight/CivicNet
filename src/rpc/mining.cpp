@@ -61,35 +61,41 @@ static UniValue GetNetworkHashPS(int lookup, int height) {
     if (lookup > pb->nHeight)
         lookup = pb->nHeight;
 
+    // Determine the window boundary by walking back `lookup` blocks total
+    // (regardless of type), preserving the original window-sizing semantics.
     CBlockIndex *pb0 = pb;
-    int64_t minTime = pb0->GetBlockTime();
-    int64_t maxTime = minTime;
     for (int i = 0; i < lookup; i++) {
         pb0 = pb0->pprev;
-        int64_t time = pb0->GetBlockTime();
-        minTime = std::min(time, minTime);
-        maxTime = std::max(time, maxTime);
     }
 
-    // In case there's a situation where minTime == maxTime, we don't want a divide by zero exception.
-    if (minTime == maxTime)
-        return 0;
-
-    // POS_HASHPS_FIX: sum PoW-only work over the same lookup-block range
-    // the original (pb0, pb] would have covered, skipping PoS blocks
-    // entirely since they don't reflect real PoW hashrate.
+    // POS_HASHPS_FIX: compute BOTH minTime/maxTime AND workDiff using ONLY
+    // PoW blocks within (pb0, pb]. PoS blocks must be excluded from the
+    // time range too, not just from the work sum -- a PoS block's
+    // timestamp isn't validated against real hashing effort and can be
+    // several minutes into the future (within the consensus tolerance),
+    // which inflates maxTime and understates the hashrate if included.
+    int64_t minTime = -1;
+    int64_t maxTime = -1;
     arith_uint256 workDiff = 0;
     for (CBlockIndex *pw = pb; pw != pb0; pw = pw->pprev) {
         bool fIsPoS = (pw->nTime >= CBlockHeader::POS_ACTIVATION_TIME) && (pw->nVersion & CBlockHeader::VERSIONBITS_POS_FLAG) != 0;
         if (!fIsPoS) {
+            int64_t t = pw->GetBlockTime();
+            if (minTime == -1 || t < minTime) minTime = t;
+            if (maxTime == -1 || t > maxTime) maxTime = t;
             workDiff += GetBlockProof(*pw);
         }
     }
+
+    // In case there's a situation where minTime == maxTime (or no PoW
+    // blocks were found at all), we don't want a divide by zero exception.
+    if (minTime == -1 || minTime == maxTime)
+        return 0;
+
     int64_t timeDiff = maxTime - minTime;
 
     return workDiff.getdouble() / timeDiff;
 }
-
 static RPCHelpMan getnetworkhashps()
 {
     return RPCHelpMan{"getnetworkhashps",
