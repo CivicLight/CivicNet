@@ -69,8 +69,30 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
     if (pindexFirst == pindexLast) return nProofOfWorkLimit; // not enough history yet
     if (nActualBlocks <= 0) return nProofOfWorkLimit; // no PoW blocks found in lookback window
 
+    // POW_RETARGET_FIX_V3: nActualTimespan's END endpoint (pindexLast) can be
+    // a PoS block with a distorted (future) timestamp, same root category as
+    // the bnNew-base issue fixed above. Note pindexFirst (the START endpoint)
+    // does NOT need the same treatment -- by construction, the window-walk
+    // loop above only stops once it has counted enough real PoW blocks, so
+    // pindexFirst already reliably lands on a PoW block.
+    // SEPARATE activation gate from the V1/V2 fixes above, per the same
+    // non-retroactivity lesson (see CHANGELOG / bnNew-base V1 incident).
+    bool fTimespanEndFixActive = (pblock != nullptr &&
+        CBlockHeader::POW_RETARGET_FIX_V3_ACTIVATION_TIME != 0 &&
+        pblock->nTime >= (uint32_t)CBlockHeader::POW_RETARGET_FIX_V3_ACTIVATION_TIME);
+    const CBlockIndex* pindexTipPoW = pindexLast;
+    if (fTimespanEndFixActive) {
+        while (pindexTipPoW != nullptr) {
+            bool fIsPoS = (pindexTipPoW->nTime >= CBlockHeader::POS_ACTIVATION_TIME) &&
+                          (pindexTipPoW->nVersion & CBlockHeader::VERSIONBITS_POS_FLAG) != 0;
+            if (!fIsPoS) break;
+            pindexTipPoW = pindexTipPoW->pprev;
+        }
+        if (pindexTipPoW == nullptr) return nProofOfWorkLimit;
+    }
+
     // Compute the actual timespan versus the target for that many blocks
-    int64_t nActualTimespan = pindexLast->GetBlockTime() - pindexFirst->GetBlockTime();
+    int64_t nActualTimespan = pindexTipPoW->GetBlockTime() - pindexFirst->GetBlockTime();
     int64_t nTargetSpacing = params.nPowTargetSpacing * (int64_t)nActualBlocks;
 
     // Clamp extreme swings so the adjustment doesn't jump too wildly (max +/-8%)
