@@ -38,45 +38,15 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
     const CBlockIndex* pindexFirst = pindexLast;
     int nActualBlocks = 0;
 
-    // POW_RETARGET_FIX: PoS blocks are found via staking, not hashing, so
-    // their fast/slow find-times don't reflect real PoW hashrate. Including
-    // them in the retarget window causes the difficulty to overshoot.
-    // Once active, walk back counting ONLY PoW blocks toward the window --
-    // PoS blocks are skipped entirely (don't count as a step, don't count
-    // toward nActualBlocks).
-    bool fPowRetargetFixActive = (pblock != nullptr &&
-        CBlockHeader::POW_RETARGET_FIX_ACTIVATION_TIME != 0 &&
-        pblock->nTime >= (uint32_t)CBlockHeader::POW_RETARGET_FIX_ACTIVATION_TIME);
-
-    if (fPowRetargetFixActive) {
-        const CBlockIndex* p = pindexLast;
-        while (p->pprev != nullptr && nActualBlocks < nBlocksBack) {
-            p = p->pprev;
-            bool fIsPoS = (p->nTime >= CBlockHeader::POS_ACTIVATION_TIME) &&
-                          (p->nVersion & CBlockHeader::VERSIONBITS_POS_FLAG) != 0;
-            if (!fIsPoS) {
-                nActualBlocks++;
-            }
-            pindexFirst = p;
-        }
-    } else {
-        for (int i = 0; i < nBlocksBack && pindexFirst->pprev != nullptr; i++) {
-            pindexFirst = pindexFirst->pprev;
-        }
-        nActualBlocks = pindexLast->nHeight - pindexFirst->nHeight;
-    }
-
-    if (pindexFirst == pindexLast) return nProofOfWorkLimit; // not enough history yet
-    if (nActualBlocks <= 0) return nProofOfWorkLimit; // no PoW blocks found in lookback window
-
-    // POW_RETARGET_FIX_V3: nActualTimespan's END endpoint (pindexLast) can be
-    // a PoS block with a distorted (future) timestamp, same root category as
-    // the bnNew-base issue fixed above. Note pindexFirst (the START endpoint)
-    // does NOT need the same treatment -- by construction, the window-walk
-    // loop above only stops once it has counted enough real PoW blocks, so
-    // pindexFirst already reliably lands on a PoW block.
-    // SEPARATE activation gate from the V1/V2 fixes above, per the same
-    // non-retroactivity lesson (see CHANGELOG / bnNew-base V1 incident).
+    // POW_RETARGET_FIX_V3: find the nearest real PoW block for the window's
+    // END endpoint FIRST, before the window walk runs -- and walk the window
+    // back from THAT block, not from pindexLast. Finding it after the window
+    // walk (as before) meant that same PoW block got double-counted: once as
+    // the window's first step, and again as the timespan's end endpoint --
+    // silently shrinking the window to 49 real intervals while nTargetSpacing
+    // was still computed for 50. Root-caused via community report (thanks,
+    // NitroPool). SEPARATE activation gate from the V1/V2 fixes below, per
+    // the same non-retroactivity lesson (see CHANGELOG / bnNew-base V1 incident).
     bool fTimespanEndFixActive = (pblock != nullptr &&
         CBlockHeader::POW_RETARGET_FIX_V3_ACTIVATION_TIME != 0 &&
         pblock->nTime >= (uint32_t)CBlockHeader::POW_RETARGET_FIX_V3_ACTIVATION_TIME);
@@ -90,6 +60,39 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
         }
         if (pindexTipPoW == nullptr) return nProofOfWorkLimit;
     }
+    const CBlockIndex* pWindowStart = fTimespanEndFixActive ? pindexTipPoW : pindexLast;
+    pindexFirst = pWindowStart;
+
+    // POW_RETARGET_FIX: PoS blocks are found via staking, not hashing, so
+    // their fast/slow find-times don't reflect real PoW hashrate. Including
+    // them in the retarget window causes the difficulty to overshoot.
+    // Once active, walk back counting ONLY PoW blocks toward the window --
+    // PoS blocks are skipped entirely (don't count as a step, don't count
+    // toward nActualBlocks).
+    bool fPowRetargetFixActive = (pblock != nullptr &&
+        CBlockHeader::POW_RETARGET_FIX_ACTIVATION_TIME != 0 &&
+        pblock->nTime >= (uint32_t)CBlockHeader::POW_RETARGET_FIX_ACTIVATION_TIME);
+
+    if (fPowRetargetFixActive) {
+        const CBlockIndex* p = pWindowStart;
+        while (p->pprev != nullptr && nActualBlocks < nBlocksBack) {
+            p = p->pprev;
+            bool fIsPoS = (p->nTime >= CBlockHeader::POS_ACTIVATION_TIME) &&
+                          (p->nVersion & CBlockHeader::VERSIONBITS_POS_FLAG) != 0;
+            if (!fIsPoS) {
+                nActualBlocks++;
+            }
+            pindexFirst = p;
+        }
+    } else {
+        for (int i = 0; i < nBlocksBack && pindexFirst->pprev != nullptr; i++) {
+            pindexFirst = pindexFirst->pprev;
+        }
+        nActualBlocks = pWindowStart->nHeight - pindexFirst->nHeight;
+    }
+
+    if (pindexFirst == pWindowStart) return nProofOfWorkLimit; // not enough history yet
+    if (nActualBlocks <= 0) return nProofOfWorkLimit; // no PoW blocks found in lookback window
 
     // Compute the actual timespan versus the target for that many blocks
     int64_t nActualTimespan = pindexTipPoW->GetBlockTime() - pindexFirst->GetBlockTime();
