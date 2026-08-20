@@ -67,6 +67,21 @@ static const int STAKE_RATIO_START_BPS = 500;    // 5%
 static const int STAKE_RATIO_FLOOR_BPS = 500;    // 5%
 static const int STAKE_RATIO_CEILING_BPS = 3000; // 30%
 static const int STAKE_RATIO_STEP_BPS = 150;     // 1.5% per window
+
+// Periodic PoS stake-target retarget window (post-POS_RETARGET_WINDOW_FIX_ACTIVATION_TIME).
+// Matches pow.cpp's own RETARGET_WINDOW=50 windowed-averaging philosophy --
+// retarget triggers every N blocks (PoW or PoS) instead of only on PoS
+// events, so the target can no longer freeze indefinitely when PoS blocks
+// stop occurring.
+static const int POS_RETARGET_WINDOW = 50;
+
+// Number of most-recent real PoS-to-PoS intervals to average when computing
+// the retarget signal, instead of a single raw interval -- smooths one-off
+// noise (a single unusually fast/slow PoS event) and avoids overreacting to
+// normal Poisson variance in stake timing. Gracefully degrades: if fewer
+// than this many real PoS blocks exist yet, uses however many are available
+// (minimum 1, the still-open current gap since the last real PoS block).
+static const int POS_RETARGET_AVERAGING_K = 5;
 static const int STAKE_RATIO_WINDOW_BLOCKS = 10080; // ~1 week at 60s/block
 
 // Computes the next window's PoS ratio given the current ratio and how
@@ -96,5 +111,25 @@ arith_uint256 GetNextStakeTarget(const arith_uint256& currentTarget,
                                   int64_t actualSpacing,
                                   int64_t targetSpacing,
                                   const arith_uint256& maxTarget);
+
+// Walks back through real PoS block history (via nLastPoSHeight chains) to
+// average up to POS_RETARGET_AVERAGING_K most-recent PoS-to-PoS intervals,
+// including the still-open gap from the last real PoS block to currentTime.
+// Returns the averaged spacing in seconds; samplesUsed is set to however
+// many intervals were actually available (1..POS_RETARGET_AVERAGING_K).
+int64_t GetAveragedPoSSpacing(const CBlockIndex* pindexTip, int64_t currentTime, int& samplesUsed);
+
+// Tiered/graduated version of the PoS retarget clamp: instead of a single
+// fixed +/-8% bound, the clamp magnitude scales with how far avgSpacing
+// deviates from targetSpacing (mild deviation -> mild correction, severe
+// deviation -> large correction), so a badly-stuck target (or a post-reset
+// PoS flood) can self-correct in hours instead of days, while normal
+// Poisson noise around the target still only sees the original +/-8% move.
+// Floored at 1 (never 0 -- 0 means "uninitialized" elsewhere in this
+// codebase and would otherwise be a spam-timestamp exploit vector).
+arith_uint256 GetNextStakeTargetTiered(const arith_uint256& currentTarget,
+                                        int64_t avgSpacing,
+                                        int64_t targetSpacing,
+                                        const arith_uint256& maxTarget);
 
 #endif // CIVICNET_POS_KERNEL_H

@@ -134,7 +134,81 @@ arith_uint256 GetNextStakeTarget(const arith_uint256& currentTarget,
     newTarget /= (uint64_t)targetSpacing;
 
     if (newTarget > maxTarget) newTarget = maxTarget;
+    if (newTarget < arith_uint256(1)) newTarget = arith_uint256(1); // never underflow to literal 0 -- 0 means "uninitialized" elsewhere in this codebase
 
+    return newTarget;
+}
+
+int64_t GetAveragedPoSSpacing(const CBlockIndex* pindexTip, int64_t currentTime, int& samplesUsed)
+{
+    samplesUsed = 0;
+    if (pindexTip == nullptr || pindexTip->nLastPoSHeight < 0) {
+        return 0; // no real PoS block yet to measure from; caller should skip retargeting
+    }
+
+    const CBlockIndex* mostRecentPoS = pindexTip->GetAncestor(pindexTip->nLastPoSHeight);
+    if (mostRecentPoS == nullptr) {
+        return 0;
+    }
+
+    int64_t totalSpacing = 0;
+    int64_t sampleEndTime = currentTime;
+    const CBlockIndex* walker = mostRecentPoS;
+
+    while (samplesUsed < POS_RETARGET_AVERAGING_K && walker != nullptr) {
+        int64_t interval = sampleEndTime - (int64_t)walker->nTime;
+        if (interval < 0) interval = 0; // defensive; shouldn't happen with well-ordered timestamps
+        totalSpacing += interval;
+        samplesUsed++;
+
+        sampleEndTime = (int64_t)walker->nTime;
+        if (walker->pprev == nullptr || walker->pprev->nLastPoSHeight < 0) {
+            break; // no earlier real PoS block to extend the average with -- degrade gracefully
+        }
+        walker = walker->pprev->GetAncestor(walker->pprev->nLastPoSHeight);
+    }
+
+    if (samplesUsed == 0) return 0;
+    return totalSpacing / samplesUsed;
+}
+
+arith_uint256 GetNextStakeTargetTiered(const arith_uint256& currentTarget,
+                                        int64_t avgSpacing,
+                                        int64_t targetSpacing,
+                                        const arith_uint256& maxTarget)
+{
+    int64_t easyNum, easyDen, hardNum, hardDen;
+
+    if (avgSpacing >= targetSpacing * 100 || avgSpacing * 100 <= targetSpacing) {
+        easyNum = 7; easyDen = 4;
+        hardNum = 4; hardDen = 7;
+    } else if (avgSpacing >= targetSpacing * 10 || avgSpacing * 10 <= targetSpacing) {
+        easyNum = 3; easyDen = 2;
+        hardNum = 2; hardDen = 3;
+    } else if (avgSpacing >= targetSpacing * 2 || avgSpacing * 2 <= targetSpacing) {
+        easyNum = 5; easyDen = 4;
+        hardNum = 4; hardDen = 5;
+    } else {
+        easyNum = 27; easyDen = 25;
+        hardNum = 25; hardDen = 27;
+    }
+
+    int64_t clampedNum = avgSpacing;
+    int64_t clampedDen = targetSpacing;
+    if (clampedNum * hardDen < clampedDen * hardNum) {
+        clampedNum = hardNum;
+        clampedDen = hardDen;
+    }
+    if (clampedNum * easyDen > clampedDen * easyNum) {
+        clampedNum = easyNum;
+        clampedDen = easyDen;
+    }
+
+    arith_uint256 newTarget = currentTarget;
+    newTarget *= (uint64_t)clampedNum;
+    newTarget /= (uint64_t)clampedDen;
+    if (newTarget > maxTarget) newTarget = maxTarget;
+    if (newTarget < arith_uint256(1)) newTarget = arith_uint256(1); // FLOOR: never underflow to literal 0
     return newTarget;
 }
 

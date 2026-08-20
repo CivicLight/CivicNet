@@ -3490,23 +3490,65 @@ CBlockIndex* BlockManager::AddToBlockIndex(const CBlockHeader& block)
         pindexNew->nStakeTarget = pindexNew->pprev->nStakeTarget;
     }
 
-    // PoS: retarget the stake target when this block is itself PoS, using
-    // spacing since the previous PoS block and a target spacing derived
-    // from the current PoW/PoS ratio (mirrors the PoW +/-8%-per-adjustment
-    // pattern via GetNextStakeTarget()). Skipped if the target isn't yet
-    // initialized or there's no prior PoS block to measure spacing against
-    // -- in those cases the inherited target from above stands.
-    if (pindexNew->pprev != nullptr && pindexNew->nStakeTarget != 0 && block.IsProofOfStake() && pindexNew->pprev->nLastPoSHeight >= 0) {
+    // === PoS stake-target maintenance: three mechanisms, own gates, in order ===
+    //
+    // (1) EMERGENCY RESET (POS_EMERGENCY_RESET, one-time, non-retroactive):
+    // mainnet's nStakeTarget got stuck ~25.86 million times harder than
+    // powLimit after PoS blocks stopped occurring around height 25821 --
+    // the flat +/-8% clamp alone would take ~7.7 days to recover from that.
+    // On the single block whose timestamp first crosses this gate,
+    // nStakeTarget is forcibly reset to powLimit. This is a one-time patch
+    // for damage already done, not a recurring mechanism -- see the
+    // civicnet-pos project notes for full history.
+    //
+    // (2) RETARGET TRIGGER (POS_RETARGET_WINDOW_FIX): PRE-activation, retarget
+    // fires only when THIS block is itself PoS -- if no PoS block occurs for
+    // an extended period, nStakeTarget never gets recomputed at all (the bug
+    // that caused the freeze above). POST-activation, retarget fires
+    // periodically every POS_RETARGET_WINDOW blocks (PoW or PoS), matching
+    // pow.cpp's own RETARGET_WINDOW=50 windowed-averaging philosophy -- can
+    // no longer freeze indefinitely.
+    //
+    // (3) RETARGET SIGNAL + CLAMP (same POS_RETARGET_WINDOW_FIX gate): PRE-
+    // activation, a single raw PoS-to-PoS interval and a flat +/-8% clamp
+    // (GetNextStakeTarget) -- byte-identical to original behavior. POST-
+    // activation, the average of the last POS_RETARGET_AVERAGING_K real
+    // PoS intervals and a tiered clamp that scales correction magnitude
+    // with how far that average deviates from targetSpacing
+    // (GetNextStakeTargetTiered) -- smooths single-event noise and can
+    // recover from severe deviations, in either direction (including a
+    // post-reset PoS flood from mechanism 1), in hours instead of days.
+    bool fPosEmergencyResetActive = (uint32_t)pindexNew->nTime >= CBlockHeader::POS_EMERGENCY_RESET_ACTIVATION_TIME;
+    bool fPosEmergencyResetPrev = pindexNew->pprev != nullptr && (uint32_t)pindexNew->pprev->nTime >= CBlockHeader::POS_EMERGENCY_RESET_ACTIVATION_TIME;
+    bool fIsEmergencyResetBlock = fPosEmergencyResetActive && !fPosEmergencyResetPrev && pindexNew->pprev != nullptr;
+    if (fIsEmergencyResetBlock) {
+        arith_uint256 maxTargetReset;
+        maxTargetReset.SetCompact(0x1e0ffff0);
+        pindexNew->nStakeTarget = maxTargetReset.GetCompact();
+    }
+
+    bool fPosRetargetWindowActive = (uint32_t)pindexNew->nTime >= CBlockHeader::POS_RETARGET_WINDOW_FIX_ACTIVATION_TIME;
+    bool fShouldRetargetStake = fPosRetargetWindowActive
+        ? (pindexNew->nHeight % POS_RETARGET_WINDOW == 0)
+        : block.IsProofOfStake();
+    if (!fIsEmergencyResetBlock && pindexNew->pprev != nullptr && pindexNew->nStakeTarget != 0 && fShouldRetargetStake && pindexNew->pprev->nLastPoSHeight >= 0) {
         const CBlockIndex* prevPoSBlock = pindexNew->pprev->GetAncestor(pindexNew->pprev->nLastPoSHeight);
         if (prevPoSBlock != nullptr) {
-            int64_t actualSpacing = (int64_t)pindexNew->nTime - (int64_t)prevPoSBlock->nTime;
             int ratioBps = pindexNew->pprev->nPoSRatioBps > 0 ? pindexNew->pprev->nPoSRatioBps : STAKE_RATIO_START_BPS;
             int64_t targetSpacing = (int64_t)Params().GetConsensus().nPowTargetSpacing * 10000LL / ratioBps;
             arith_uint256 currentTarget;
             currentTarget.SetCompact(pindexNew->nStakeTarget);
             arith_uint256 maxTarget;
             maxTarget.SetCompact(0x1e0ffff0);
-            arith_uint256 newTarget = GetNextStakeTarget(currentTarget, actualSpacing, targetSpacing, maxTarget);
+            arith_uint256 newTarget;
+            if (fPosRetargetWindowActive) {
+                int samplesUsed = 0;
+                int64_t avgSpacing = GetAveragedPoSSpacing(pindexNew->pprev, (int64_t)pindexNew->nTime, samplesUsed);
+                newTarget = GetNextStakeTargetTiered(currentTarget, avgSpacing, targetSpacing, maxTarget);
+            } else {
+                int64_t actualSpacing = (int64_t)pindexNew->nTime - (int64_t)prevPoSBlock->nTime;
+                newTarget = GetNextStakeTarget(currentTarget, actualSpacing, targetSpacing, maxTarget);
+            }
             pindexNew->nStakeTarget = newTarget.GetCompact();
         }
     }

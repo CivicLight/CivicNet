@@ -85,6 +85,8 @@ public:
     static const uint32_t POW_RETARGET_FIX_ACTIVATION_TIME = 1786639191; // placeholder, will be set right before deployment
     static const uint32_t POW_RETARGET_FIX_V2_ACTIVATION_TIME = 1786946400; // 2026-08-17 06:00:00 UTC
     static const uint32_t POW_RETARGET_FIX_V3_ACTIVATION_TIME = 1787302800; // V3 pindexLast (endpoint tip) fix - 2026-08-21 09:00:00 UTC
+    static const uint32_t POS_RETARGET_WINDOW_FIX_ACTIVATION_TIME = 1787302800; // periodic PoS retarget window fix (own gate, never reuse another fix's gate) - 2026-08-21 09:00:00 UTC
+    static const uint32_t POS_EMERGENCY_RESET_ACTIVATION_TIME = 1787302800; // one-time nStakeTarget reset to powLimit, own separate gate (placeholder/disabled until a real deploy date is chosen)
 
     bool IsProofOfStake() const {
         return nTime >= POS_ACTIVATION_TIME && (nVersion & VERSIONBITS_POS_FLAG) != 0;

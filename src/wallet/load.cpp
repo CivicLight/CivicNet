@@ -144,6 +144,7 @@ static void TryStakeAllWallets()
     uint256 tipHash;
     int tipHeight;
     uint32_t tipMedianTimePast;
+    int tipLastPoSHeight; // ADDED (Bug 1 fix): needed for CanBeProofOfStake gap check
     // CONSISTENCY FIX support: captured in the outer scope so it survives
     // past the cs_main lock block, for use with ComputeExpectedStakeTarget
     // further down when constructing the candidate block.
@@ -159,6 +160,7 @@ static void TryStakeAllWallets()
         tipHash = tip->GetBlockHash();
         tipHeight = tip->nHeight;
         tipMedianTimePast = (uint32_t)tip->GetMedianTimePast();
+        tipLastPoSHeight = tip->nLastPoSHeight; // ADDED (Bug 1 fix)
     }
 
     uint32_t nowTime = std::max((uint32_t)GetAdjustedTime(), (uint32_t)tipMedianTimePast + 1);
@@ -167,6 +169,17 @@ static void TryStakeAllWallets()
     arith_uint256 target;
     target.SetCompact(tipStakeTarget);
     if (target == 0) return; // PoS not yet active on this chain
+
+    // ADDED (Bug 1 fix): don't even attempt kernel search/block
+    // construction if the anti-clustering gap (min N PoW blocks since
+    // the last PoS block) hasn't been satisfied yet -- previously this
+    // was only enforced in validation.cpp's ConnectBlock, so every
+    // premature attempt cost a full build+sign+ProcessNewBlock cycle
+    // only to be rejected as bad-cs-clustering.
+    if (!CanBeProofOfStake(tipHeight + 1, tipLastPoSHeight)) {
+        LogPrintf("PoS: skipping staking check tick, anti-clustering gap not satisfied yet\n");
+        return;
+    }
 
     for (const std::shared_ptr<CWallet>& pwallet : GetWallets()) {
         if (pwallet->IsLocked()) continue;
@@ -195,7 +208,7 @@ static void TryStakeAllWallets()
             bool found = CheckStakeKernel(
                 tipStakeModifier,
                 tipTime,
-                (uint32_t)coin.GetDepth(), // block-depth substitute for tx offset, consistent with ConnectBlock's approach
+                (uint32_t)coin.GetBlockHeight(), // FIXED (Bug 2): origin block height -- must match validation.cpp's capturedStakerHeight, NOT depth (depth is relative/moving, height is fixed)
                 (uint32_t)coin.GetInputCoin().GetOutpoint().n,
                 candidateTime,
                 balance,

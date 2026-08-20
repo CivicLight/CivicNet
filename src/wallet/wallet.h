@@ -649,6 +649,15 @@ public:
     {
         return CInputCoin(tx->tx, i, nInputBytes);
     }
+
+    // ADDED (Bug 2 fix): fixed origin block height of this output's
+    // containing tx, for use in PoS kernel computation -- must match
+    // validation.cpp's capturedStakerHeight (stakerCoinPre.nHeight)
+    // semantics exactly. Do NOT use nDepth here (that's relative/moving).
+    inline int GetBlockHeight() const
+    {
+        return tx->m_confirm.block_height;
+    }
 };
 
 struct MWOutput {
@@ -713,6 +722,13 @@ struct COutputCoin {
     {
         if (IsMWEB()) return CInputCoin(boost::get<MWOutput>(m_output).coin);
         return boost::get<COutput>(m_output).GetInputCoin();
+    }
+
+    // ADDED (Bug 2 fix): see COutput::GetBlockHeight() above.
+    int GetBlockHeight() const
+    {
+        if (IsMWEB()) return 0; // MWEB coins not currently supported for staking
+        return boost::get<COutput>(m_output).GetBlockHeight();
     }
 
     OutputIndex GetIndex() const
