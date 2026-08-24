@@ -204,6 +204,7 @@ enum opcodetype
     OP_CHECKSEQUENCEVERIFY = 0xb2,
     OP_NOP3 = OP_CHECKSEQUENCEVERIFY,
     OP_NOP4 = 0xb3,
+    OP_TOKEN_RESERVE = OP_NOP4, // Hybrid Value Layer: repurposed NOP, see interpreter.cpp
     OP_NOP5 = 0xb4,
     OP_NOP6 = 0xb5,
     OP_NOP7 = 0xb6,

@@ -1300,6 +1300,8 @@ CoinsViews::CoinsViews(
     bool in_memory,
     bool should_wipe) : m_dbview(
                             GetDataDir() / ldb_name, cache_size_bytes, in_memory, should_wipe),
+                        m_tokendb(
+                            GetDataDir() / "tokendb", cache_size_bytes, in_memory, should_wipe),
                         m_catcherview(&m_dbview) {}
 
 void CoinsViews::InitCache()
@@ -1994,6 +1996,10 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex* pindex, const Consens
     // Start enforcing BIP112 (CHECKSEQUENCEVERIFY)
     if (pindex->nHeight >= consensusparams.CSVHeight) {
         flags |= SCRIPT_VERIFY_CHECKSEQUENCEVERIFY;
+    }
+    // Start enforcing Hybrid Value Layer token reserve custody
+    if (pindex->nTime >= HYBRID_VALUE_LAYER_ACTIVATION_TIME) {
+        flags |= SCRIPT_VERIFY_TOKEN_RESERVE;
     }
 
     // Start enforcing Taproot using versionbits logic.

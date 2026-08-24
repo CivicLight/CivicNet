@@ -115,6 +115,8 @@ std::string ScriptErrorString(const ScriptError serror)
             return "Using OP_CODESEPARATOR in non-witness script";
         case SCRIPT_ERR_SIG_FINDANDDELETE:
             return "Signature is found in scriptCode";
+        case SCRIPT_ERR_TOKEN_RESERVE_LOCKED:
+            return "Hybrid Value Layer reserve output is not spendable via script -- redeem via TX_CONVERT_OUT";
         case SCRIPT_ERR_UNKNOWN_ERROR:
         case SCRIPT_ERR_ERROR_COUNT:
         default: break;

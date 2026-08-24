@@ -82,6 +82,9 @@ typedef enum ScriptError_t
     SCRIPT_ERR_OP_CODESEPARATOR,
     SCRIPT_ERR_SIG_FINDANDDELETE,
 
+    /* Hybrid Value Layer */
+    SCRIPT_ERR_TOKEN_RESERVE_LOCKED,
+
     SCRIPT_ERR_ERROR_COUNT
 } ScriptError;
 
