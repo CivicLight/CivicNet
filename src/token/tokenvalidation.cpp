@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <token/tokenvalidation.h>
+#include <hash.h>
 #include <arith_uint256.h>
 
 bool ApplyTokenTx(const CTransaction& tx, CTokenViewCache& tokenView, const CCoinsViewCache& view,
@@ -17,7 +18,12 @@ bool ApplyTokenTx(const CTransaction& tx, CTokenViewCache& tokenView, const CCoi
 
     if (tx.nTokenTxType == TOKEN_TX_ISSUE) {
         const CTokenIssuePayload& p = tx.tokenIssuePayload;
-        uint256 tokenID = tx.GetHash();
+        // tokenID = hash of the first input's outpoint (see tx_check.cpp for why this
+        // avoids the self-referential impossibility of using tx.GetHash() here).
+        if (tx.vin.empty()) {
+            return tx_state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-token-issue-no-inputs");
+        }
+        uint256 tokenID = SerializeHash(tx.vin[0].prevout);
 
         // CheckTransaction() already guarantees exactly-correct mint output sum
         // and payload field validity. Here we only need the parts that require
@@ -76,7 +82,7 @@ bool ApplyTokenTx(const CTransaction& tx, CTokenViewCache& tokenView, const CCoi
         entry.issuerScriptPubKey = issuerScriptPubKey;
         entry.nFlags = p.nFlags;
         entry.poeAnchorHash = p.poeAnchorHash;
-        entry.issueTxid = tokenID;
+        entry.issueTxid = tx.GetHash(); // the real txid of the TX_ISSUE (distinct from tokenID, used for explorer lookups)
         entry.nIssueHeight = (uint32_t)nHeight;
         entry.nVestingStartHeight = p.nVestingStartHeight;
         entry.nVestingDurationBlocks = p.nVestingDurationBlocks;

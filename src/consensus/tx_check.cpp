@@ -6,6 +6,7 @@
 
 #include <primitives/transaction.h>
 #include <consensus/validation.h>
+#include <hash.h>
 
 bool CheckTransaction(const CTransaction& tx, TxValidationState& state)
 {
@@ -85,8 +86,17 @@ bool CheckTransaction(const CTransaction& tx, TxValidationState& state)
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-token-vesting-fields-nonzero");
         }
 
-        // Minted token outputs (tokenID == this tx's own hash) must sum exactly to nInitialSupply.
-        uint256 expectedTokenID = tx.GetHash();
+        // tokenID = hash of the FIRST input's outpoint being spent -- NOT tx.GetHash().
+        // Using this tx's own hash would be self-referential and literally uncomputable:
+        // the hash depends on the very outputs that would need to embed it. Hashing the
+        // committed first input instead is knowable before the tx is even fully built
+        // (it only depends on which UTXO the issuer chooses to spend), and is just as
+        // globally unique since a given outpoint can only ever be spent once.
+        if (tx.vin.empty())
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-token-issue-no-inputs");
+        uint256 expectedTokenID = SerializeHash(tx.vin[0].prevout);
+
+        // Minted token outputs (tokenID == the computed token ID above) must sum exactly to nInitialSupply.
         uint64_t nMinted = 0;
         for (const CTxOut& out : tx.vout) {
             if (out.tokenID == expectedTokenID) {
