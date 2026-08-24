@@ -12,6 +12,7 @@
 
 #include <amount.h>
 #include <coins.h>
+#include <token/tokendb.h>
 #include <crypto/common.h> // for ReadLE64
 #include <fs.h>
 #include <optional.h>

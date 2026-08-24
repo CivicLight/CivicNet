@@ -57,5 +57,57 @@ bool CheckTransaction(const CTransaction& tx, TxValidationState& state)
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-prevout-null");
     }
 
+    // --- Hybrid Value Layer: stateless token checks ---
+    if (tx.nTokenTxType == TOKEN_TX_ISSUE) {
+        const CTokenIssuePayload& p = tx.tokenIssuePayload;
+
+        if (p.symbol.empty() || p.symbol.size() > MAX_TOKEN_SYMBOL_LEN)
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-token-symbol-len");
+        for (char c : p.symbol) {
+            if (!((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')))
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-token-symbol-charset");
+        }
+        if (p.name.size() > MAX_TOKEN_NAME_LEN)
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-token-name-len");
+        if (p.nTokenType != TOKEN_TYPE_STANDARD && p.nTokenType != TOKEN_TYPE_VESTING)
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-token-type");
+        if (p.nDecimals > MAX_TOKEN_DECIMALS)
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-token-decimals");
+        if (p.nInitialSupply == 0 || p.nInitialSupply > MAX_TOKEN_SUPPLY_CAP)
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-token-initial-supply");
+        if (p.nTokenType == TOKEN_TYPE_VESTING) {
+            if (p.nVestingDurationBlocks == 0)
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-token-vesting-duration");
+            if (p.nVestingCliffBlocks > p.nVestingDurationBlocks)
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-token-vesting-cliff");
+        } else {
+            if (p.nVestingStartHeight != 0 || p.nVestingDurationBlocks != 0 || p.nVestingCliffBlocks != 0)
+                return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-token-vesting-fields-nonzero");
+        }
+
+        // Minted token outputs (tokenID == this tx's own hash) must sum exactly to nInitialSupply.
+        uint256 expectedTokenID = tx.GetHash();
+        uint64_t nMinted = 0;
+        for (const CTxOut& out : tx.vout) {
+            if (out.tokenID == expectedTokenID) {
+                if (out.nTokenAmount == 0)
+                    return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-token-issue-zero-output");
+                nMinted += out.nTokenAmount;
+            }
+        }
+        if (nMinted != p.nInitialSupply)
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-token-issue-mint-mismatch");
+    } else if (tx.nTokenTxType == TOKEN_TX_CONVERT_OUT) {
+        const CTokenConvertOutPayload& p = tx.tokenConvertOutPayload;
+        if (p.tokenID.IsNull() || p.nTokenAmountBurned == 0)
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-token-convert-out-payload");
+    }
+
+    // Every CTxOut's token field pair must be consistent: both null/zero, or both set.
+    for (const CTxOut& out : tx.vout) {
+        if (out.tokenID.IsNull() != (out.nTokenAmount == 0))
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-token-output-malformed");
+    }
+
     return true;
 }
