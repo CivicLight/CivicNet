@@ -1866,6 +1866,25 @@ DisconnectResult CChainState::DisconnectBlock(const CBlock& block, const CBlockI
         }
     }
 
+    // Hybrid Value Layer: reverse this block's token-side effects
+    {
+        CTokenBlockUndo blockTokenUndo;
+        if (TokenDB().ReadTokenBlockUndo(block.GetHash(), blockTokenUndo)) {
+            CTokenViewCache tokenView(TokenDB());
+            if (!UndoTokenBlock(block, tokenView, blockTokenUndo)) {
+                error("DisconnectBlock(): failed to undo token block state");
+                return DISCONNECT_FAILED;
+            }
+            if (!tokenView.Flush()) {
+                error("DisconnectBlock(): failed to flush reverted token state");
+                return DISCONNECT_FAILED;
+            }
+            TokenDB().EraseTokenBlockUndo(block.GetHash());
+        }
+        // If no token undo record exists, this block carried no token
+        // transactions -- nothing to reverse, not an error.
+    }
+
     // move best block pointer to prevout block
     view.SetBestBlock(pindex->pprev->GetBlockHash());
 

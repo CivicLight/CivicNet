@@ -26,4 +26,12 @@ bool ApplyTokenTx(const CTransaction& tx, CTokenViewCache& tokenView, const CCoi
                    int nHeight, std::set<unsigned int>& skipInputs,
                    CTokenBlockUndo& txUndo, TxValidationState& tx_state);
 
+/** Reverses every token-side effect of a block during DisconnectBlock:
+ *  erases token-colored outputs created by this block's transactions
+ *  (ISSUE mints, CONVERT_OUT change), restores token-UTXO inputs that were
+ *  spent, and restores registry state to how it was before this block
+ *  (walking prevRegistryState in reverse so multiple touches to the same
+ *  token within one block unwind correctly). */
+bool UndoTokenBlock(const CBlock& block, CTokenViewCache& tokenView, const CTokenBlockUndo& blockUndo);
+
 #endif // CIVICNET_TOKEN_TOKENVALIDATION_H

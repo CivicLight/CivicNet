@@ -128,6 +128,7 @@ class CTokenViewCache
 private:
     CTokenDB& m_db;
     std::map<uint256, CTokenRegistryEntry> m_registryCache;
+    std::set<uint256> m_registryErases;
     std::map<COutPoint, CTokenCoin> m_coinCacheAdds;
     std::set<COutPoint> m_coinCacheErases;
 
@@ -136,18 +137,26 @@ public:
 
     bool HaveTokenRegistry(const uint256& tokenID) const
     {
+        if (m_registryErases.count(tokenID)) return false;
         if (m_registryCache.count(tokenID)) return true;
         return m_db.HaveTokenRegistry(tokenID);
     }
     bool GetTokenRegistry(const uint256& tokenID, CTokenRegistryEntry& entry) const
     {
+        if (m_registryErases.count(tokenID)) return false;
         auto it = m_registryCache.find(tokenID);
         if (it != m_registryCache.end()) { entry = it->second; return true; }
         return m_db.ReadTokenRegistry(tokenID, entry);
     }
     void SetTokenRegistry(const uint256& tokenID, const CTokenRegistryEntry& entry)
     {
+        m_registryErases.erase(tokenID);
         m_registryCache[tokenID] = entry;
+    }
+    void EraseTokenRegistry(const uint256& tokenID)
+    {
+        m_registryCache.erase(tokenID);
+        m_registryErases.insert(tokenID);
     }
 
     bool HaveTokenCoin(const COutPoint& outpoint) const
@@ -181,6 +190,9 @@ public:
         for (const auto& kv : m_registryCache) {
             if (!m_db.WriteTokenRegistry(kv.first, kv.second)) return false;
         }
+        for (const uint256& tokenID : m_registryErases) {
+            if (!m_db.EraseTokenRegistry(tokenID)) return false;
+        }
         for (const auto& kv : m_coinCacheAdds) {
             if (!m_db.WriteTokenCoin(kv.first, kv.second)) return false;
         }
@@ -188,6 +200,7 @@ public:
             if (!m_db.EraseTokenCoin(op)) return false;
         }
         m_registryCache.clear();
+        m_registryErases.clear();
         m_coinCacheAdds.clear();
         m_coinCacheErases.clear();
         return true;

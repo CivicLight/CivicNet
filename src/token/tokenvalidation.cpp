@@ -194,3 +194,37 @@ bool ApplyTokenTx(const CTransaction& tx, CTokenViewCache& tokenView, const CCoi
 
     return true;
 }
+
+bool UndoTokenBlock(const CBlock& block, CTokenViewCache& tokenView, const CTokenBlockUndo& blockUndo)
+{
+    // 1) Erase any token-colored outputs created by this block's transactions
+    //    (ISSUE mint outputs, CONVERT_OUT token change).
+    for (const auto& txRef : block.vtx) {
+        const CTransaction& tx = *txRef;
+        uint256 txid = tx.GetHash();
+        for (size_t o = 0; o < tx.vout.size(); o++) {
+            const CTxOut& out = tx.vout[o];
+            if (!out.tokenID.IsNull() && out.nTokenAmount > 0) {
+                tokenView.SpendTokenCoin(COutPoint(txid, (uint32_t)o));
+            }
+        }
+    }
+
+    // 2) Restore token-UTXO inputs that were spent during this block.
+    for (const auto& kv : blockUndo.spentTokenCoins) {
+        tokenView.AddTokenCoin(kv.first, kv.second);
+    }
+
+    // 3) Restore registry state, walking prevRegistryState in reverse (LIFO)
+    //    so multiple touches to the same token within one block unwind correctly.
+    for (auto it = blockUndo.prevRegistryState.rbegin(); it != blockUndo.prevRegistryState.rend(); ++it) {
+        tokenView.SetTokenRegistry(it->first, it->second);
+    }
+
+    // 4) Erase registry entries for tokens newly created in this block.
+    for (const uint256& tokenID : blockUndo.newTokenIDs) {
+        tokenView.EraseTokenRegistry(tokenID);
+    }
+
+    return true;
+}
