@@ -4,6 +4,7 @@
 
 #include <rpc/server.h>
 #include <rpc/util.h>
+#include <core_io.h>
 #include <validation.h>
 #include <token/tokendb.h>
 #include <token/tokentx.h>
