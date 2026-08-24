@@ -394,6 +394,7 @@ libbitcoin_server_a_SOURCES = \
   txdb.cpp \
   token/tokendb.cpp \
   token/tokenvalidation.cpp \
+  rpc/token.cpp \
   txrequest.cpp \
   txmempool.cpp \
   validation.cpp \
