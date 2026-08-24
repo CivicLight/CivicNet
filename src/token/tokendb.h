@@ -13,6 +13,8 @@
 #include <memory>
 #include <vector>
 #include <utility>
+#include <map>
+#include <set>
 
 /** Full metadata "registry card" for one issued token, keyed by tokenID
  *  (== the txid of its TX_ISSUE). Analogous in role to how `chainstate`
@@ -113,6 +115,83 @@ public:
     bool ReadTokenBlockUndo(const uint256& blockHash, CTokenBlockUndo& undo) const;
     bool WriteTokenBlockUndo(const uint256& blockHash, const CTokenBlockUndo& undo);
     bool EraseTokenBlockUndo(const uint256& blockHash);
+};
+
+/** In-memory write buffer over CTokenDB, mirroring how CCoinsViewCache
+ *  defers real disk writes until the whole block is confirmed connectable.
+ *  Without this, a mid-block ConnectBlock failure could leave tokendb/
+ *  permanently out of sync with chainstate/ (writes already committed for
+ *  a block that never actually connects). Reads check the pending buffer
+ *  first, then fall through to the underlying CTokenDB. */
+class CTokenViewCache
+{
+private:
+    CTokenDB& m_db;
+    std::map<uint256, CTokenRegistryEntry> m_registryCache;
+    std::map<COutPoint, CTokenCoin> m_coinCacheAdds;
+    std::set<COutPoint> m_coinCacheErases;
+
+public:
+    explicit CTokenViewCache(CTokenDB& db) : m_db(db) {}
+
+    bool HaveTokenRegistry(const uint256& tokenID) const
+    {
+        if (m_registryCache.count(tokenID)) return true;
+        return m_db.HaveTokenRegistry(tokenID);
+    }
+    bool GetTokenRegistry(const uint256& tokenID, CTokenRegistryEntry& entry) const
+    {
+        auto it = m_registryCache.find(tokenID);
+        if (it != m_registryCache.end()) { entry = it->second; return true; }
+        return m_db.ReadTokenRegistry(tokenID, entry);
+    }
+    void SetTokenRegistry(const uint256& tokenID, const CTokenRegistryEntry& entry)
+    {
+        m_registryCache[tokenID] = entry;
+    }
+
+    bool HaveTokenCoin(const COutPoint& outpoint) const
+    {
+        if (m_coinCacheErases.count(outpoint)) return false;
+        if (m_coinCacheAdds.count(outpoint)) return true;
+        return m_db.HaveTokenCoin(outpoint);
+    }
+    bool GetTokenCoin(const COutPoint& outpoint, CTokenCoin& coin) const
+    {
+        if (m_coinCacheErases.count(outpoint)) return false;
+        auto it = m_coinCacheAdds.find(outpoint);
+        if (it != m_coinCacheAdds.end()) { coin = it->second; return true; }
+        return m_db.ReadTokenCoin(outpoint, coin);
+    }
+    void AddTokenCoin(const COutPoint& outpoint, const CTokenCoin& coin)
+    {
+        m_coinCacheErases.erase(outpoint);
+        m_coinCacheAdds[outpoint] = coin;
+    }
+    void SpendTokenCoin(const COutPoint& outpoint)
+    {
+        m_coinCacheAdds.erase(outpoint);
+        m_coinCacheErases.insert(outpoint);
+    }
+
+    //! Commits every buffered change to the underlying CTokenDB. Only call
+    //! after the ENTIRE block is confirmed connectable.
+    bool Flush()
+    {
+        for (const auto& kv : m_registryCache) {
+            if (!m_db.WriteTokenRegistry(kv.first, kv.second)) return false;
+        }
+        for (const auto& kv : m_coinCacheAdds) {
+            if (!m_db.WriteTokenCoin(kv.first, kv.second)) return false;
+        }
+        for (const auto& op : m_coinCacheErases) {
+            if (!m_db.EraseTokenCoin(op)) return false;
+        }
+        m_registryCache.clear();
+        m_coinCacheAdds.clear();
+        m_coinCacheErases.clear();
+        return true;
+    }
 };
 
 #endif // CIVICNET_TOKEN_TOKENDB_H

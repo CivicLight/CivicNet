@@ -8,12 +8,50 @@
 #include <serialize.h>
 #include <uint256.h>
 #include <amount.h>
+#include <script/script.h>
 #include <string>
+#include <vector>
 
 static const unsigned int MAX_TOKEN_SYMBOL_LEN = 12;
 static const unsigned int MAX_TOKEN_NAME_LEN   = 32;
 static const uint8_t      MAX_TOKEN_DECIMALS   = 8;
 static const uint64_t     MAX_TOKEN_SUPPLY_CAP = 1000000000ULL; // 1 miliar (Tier 1 cap)
+
+// TODO: set real deploy time before mainnet activation (0 = active immediately, dev/test only)
+static const int64_t HYBRID_VALUE_LAYER_ACTIVATION_TIME = 0;
+
+/** Builds the consensus-recognized reserve-custody script for a token:
+ *  PUSH(32-byte tokenID) OP_TOKEN_RESERVE. Funds sent here are NOT spendable by
+ *  any private key -- only a valid TX_CONVERT_OUT redemption (validated in
+ *  ConnectBlock, outside normal script evaluation) can release them. */
+inline CScript BuildTokenReserveScript(const uint256& tokenID)
+{
+    CScript script;
+    script << std::vector<unsigned char>(tokenID.begin(), tokenID.end()) << OP_TOKEN_RESERVE;
+    return script;
+}
+
+/** Recognizes the reserve-custody script template. If tokenIDOut is non-null
+ *  and the script matches, the embedded tokenID is written to it. */
+inline bool IsTokenReserveScript(const CScript& script, uint256* tokenIDOut = nullptr)
+{
+    if (script.size() != 34) return false;
+    if (script[0] != 0x20) return false; // push-32-bytes opcode
+    if (script[33] != OP_TOKEN_RESERVE) return false;
+    if (tokenIDOut) {
+        *tokenIDOut = uint256(std::vector<unsigned char>(script.begin() + 1, script.begin() + 33));
+    }
+    return true;
+}
+
+// TODO: promote to the versioned-constant activation-gate pattern used
+// elsewhere (MIN_TOKEN_LOCK_AMOUNT -> _V2 -> _V3) before mainnet deploy --
+// hardcoded starting value for now (1000 CIVIC), per earlier design.
+inline CAmount GetMinTokenLockAmount(int nHeight)
+{
+    (void)nHeight;
+    return 1000 * COIN;
+}
 
 /** Nilai byte `nTokenTxType` di dalam payload -- BUKAN CTransaction::nVersion. */
 enum TokenTxType : uint8_t {
@@ -115,3 +153,5 @@ public:
 };
 
 #endif // CIVICNET_TOKEN_TOKENTX_H
+
+// DIAGNOSTIC_MARKER_TEST_12345

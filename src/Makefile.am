@@ -271,10 +271,7 @@ BITCOIN_CORE_H = \
   txdb.h \
   token/tokendb.h \
   token/tokentx.h \
-  token/tokendb.h \
-  token/tokentx.h \
-  token/tokendb.h \
-  token/tokentx.h \
+  token/tokenvalidation.h \
   txrequest.h \
   txmempool.h \
   undo.h \
@@ -396,8 +393,7 @@ libbitcoin_server_a_SOURCES = \
   torcontrol.cpp \
   txdb.cpp \
   token/tokendb.cpp \
-  token/tokendb.cpp \
-  token/tokendb.cpp \
+  token/tokenvalidation.cpp \
   txrequest.cpp \
   txmempool.cpp \
   validation.cpp \
