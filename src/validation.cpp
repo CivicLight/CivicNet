@@ -16,6 +16,7 @@
 #include <consensus/tx_check.h>
 #include <consensus/tx_verify.h>
 #include <consensus/validation.h>
+#include <token/tokenvalidation.h>
 #include <cuckoocache.h>
 #include <flatfile.h>
 #include <hash.h>
@@ -2214,6 +2215,8 @@ bool CChainState::ConnectBlock(const CBlock& block, BlockValidationState& state,
     LogPrint(BCLog::BENCH, "    - Fork checks: %.2fms [%.2fs (%.2fms/blk)]\n", MILLI * (nTime2 - nTime1), nTimeForks * MICRO, nTimeForks * MILLI / nBlocksTotal);
 
     CBlockUndo blockundo;
+    CTokenViewCache tokenView(TokenDB());
+    CTokenBlockUndo blockTokenUndo;
 
     // Precomputed transaction data pointers must not be invalidated
     // until after `control` has run the script checks (potentially
@@ -2302,12 +2305,22 @@ bool CChainState::ConnectBlock(const CBlock& block, BlockValidationState& state,
             return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blk-sigops");
         }
 
+        std::set<unsigned int> tokenSkipInputs;
+        if (!tx.IsCoinBase() && tx.nTokenTxType != TOKEN_TX_NONE) {
+            TxValidationState token_tx_state;
+            if (!ApplyTokenTx(tx, tokenView, view, pindex->nHeight, tokenSkipInputs, blockTokenUndo, token_tx_state)) {
+                state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
+                              token_tx_state.GetRejectReason(), token_tx_state.GetDebugMessage());
+                return error("%s: ApplyTokenTx: %s, %s", __func__, tx.GetHash().ToString(), state.ToString());
+            }
+        }
+
         if (!tx.IsCoinBase())
         {
             std::vector<CScriptCheck> vChecks;
             bool fCacheResults = fJustCheck; /* Don't cache results if we're actually connecting blocks (still consult the cache, though) */
             TxValidationState tx_state;
-            if (fScriptChecks && !CheckInputScripts(tx, tx_state, view, flags, fCacheResults, fCacheResults, txsdata[i], g_parallel_script_checks ? &vChecks : nullptr)) {
+            if (fScriptChecks && !CheckInputScripts(tx, tx_state, view, flags, fCacheResults, fCacheResults, txsdata[i], g_parallel_script_checks ? &vChecks : nullptr, tokenSkipInputs.empty() ? nullptr : &tokenSkipInputs)) {
                 // Any transaction validation failure in ConnectBlock is a block consensus failure
                 state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                               tx_state.GetRejectReason(), tx_state.GetDebugMessage());
@@ -2442,6 +2455,12 @@ bool CChainState::ConnectBlock(const CBlock& block, BlockValidationState& state,
 
     if (!WriteUndoDataForBlock(blockundo, state, pindex, chainparams))
         return false;
+    if (!tokenView.Flush()) {
+        return AbortNode(state, "Failed to write Hybrid Value Layer token database changes");
+    }
+    if (!TokenDB().WriteTokenBlockUndo(block.GetHash(), blockTokenUndo)) {
+        return AbortNode(state, "Failed to write Hybrid Value Layer token undo data");
+    }
 
     if (!pindex->IsValid(BLOCK_VALID_SCRIPTS)) {
         pindex->RaiseValidity(BLOCK_VALID_SCRIPTS);
