@@ -212,6 +212,50 @@ arith_uint256 GetNextStakeTargetTiered(const arith_uint256& currentTarget,
     return newTarget;
 }
 
+uint32_t PredictNextStakeTarget(const CBlockIndex* pindexTip, uint32_t candidateTime)
+{
+    if (pindexTip == nullptr) {
+        return 0;
+    }
+    uint32_t baseTarget = pindexTip->nStakeTarget;
+    int candidateHeight = pindexTip->nHeight + 1;
+
+    // Mirror AddToBlockIndex's emergency-reset check for the candidate height.
+    bool fPosEmergencyResetActive = candidateTime >= CBlockHeader::POS_EMERGENCY_RESET_ACTIVATION_TIME;
+    bool fPosEmergencyResetPrev = (uint32_t)pindexTip->nTime >= CBlockHeader::POS_EMERGENCY_RESET_ACTIVATION_TIME;
+    bool fIsEmergencyResetBlock = fPosEmergencyResetActive && !fPosEmergencyResetPrev;
+    if (fIsEmergencyResetBlock) {
+        arith_uint256 maxTargetReset;
+        maxTargetReset.SetCompact(0x1e0ffff0);
+        return maxTargetReset.GetCompact();
+    }
+
+    bool fPosRetargetWindowActive = candidateTime >= CBlockHeader::POS_RETARGET_WINDOW_FIX_ACTIVATION_TIME;
+    bool fShouldRetargetStake = fPosRetargetWindowActive
+        ? (candidateHeight % POS_RETARGET_WINDOW == 0)
+        : false; // wallet-side prediction only matters for the periodic-checkpoint case;
+                 // pre-activation, retarget only fires when the candidate itself is PoS,
+                 // which the wallet cannot know in advance of finding a kernel -- falls
+                 // back to baseTarget, matching pre-activation behavior (no prediction gap existed then).
+
+    if (baseTarget != 0 && fShouldRetargetStake && pindexTip->nLastPoSHeight >= 0) {
+        const CBlockIndex* prevPoSBlock = pindexTip->GetAncestor(pindexTip->nLastPoSHeight);
+        if (prevPoSBlock != nullptr) {
+            arith_uint256 currentTarget;
+            currentTarget.SetCompact(baseTarget);
+            arith_uint256 maxTarget;
+            maxTarget.SetCompact(0x1e0ffff0);
+            int samplesUsed = 0;
+            int64_t avgSpacing = GetAveragedPoSSpacing(pindexTip, (int64_t)candidateTime, samplesUsed);
+            int ratioBps = pindexTip->nPoSRatioBps > 0 ? pindexTip->nPoSRatioBps : STAKE_RATIO_START_BPS;
+            int64_t targetSpacing = (int64_t)Params().GetConsensus().nPowTargetSpacing * 10000LL / ratioBps;
+            arith_uint256 newTarget = GetNextStakeTargetTiered(currentTarget, avgSpacing, targetSpacing, maxTarget);
+            return newTarget.GetCompact();
+        }
+    }
+    return baseTarget;
+}
+
 uint32_t ComputeExpectedStakeTarget(const CBlockIndex* pindexPrev, const CBlockHeader& block)
 {
     if (pindexPrev == nullptr) {
@@ -223,6 +267,20 @@ uint32_t ComputeExpectedStakeTarget(const CBlockIndex* pindexPrev, const CBlockH
     } else {
         baseTarget = pindexPrev->nStakeTarget;
     }
+
+    // POST-GATE: nBits (and thus nChainWork via GetBlockProof) is computed via
+    // the SAME PredictNextStakeTarget() prediction the wallet uses to search
+    // kernels, which itself mirrors AddToBlockIndex's retarget logic exactly.
+    // This keeps nBits correct even on a block whose height lands exactly on
+    // a POS_RETARGET_WINDOW checkpoint (previously, a plain return of
+    // pindexPrev->nStakeTarget missed the child-height retarget that
+    // AddToBlockIndex applies to pindex->nStakeTarget in that exact case,
+    // reintroducing a divergence -- now eliminated by sharing one function).
+    if (CBlockHeader::POS_NBITS_UNIFY_ACTIVATION_TIME != 0 && block.nTime >= CBlockHeader::POS_NBITS_UNIFY_ACTIVATION_TIME) {
+        return PredictNextStakeTarget(pindexPrev, block.nTime);
+    }
+
+    // PRE-GATE: original flat +-8% event-driven logic, byte-identical to before.
     if (baseTarget != 0 && pindexPrev->nLastPoSHeight >= 0) {
         const CBlockIndex* prevPoSBlock = pindexPrev->GetAncestor(pindexPrev->nLastPoSHeight);
         if (prevPoSBlock != nullptr) {

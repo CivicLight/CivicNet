@@ -139,7 +139,6 @@ static void TryStakeAllWallets()
     // wasted CPU and log spam before activation.
     if ((uint32_t)GetAdjustedTime() < CBlockHeader::POS_ACTIVATION_TIME) return;
     uint256 tipStakeModifier;
-    uint32_t tipStakeTarget;
     uint32_t tipTime;
     uint256 tipHash;
     int tipHeight;
@@ -155,7 +154,6 @@ static void TryStakeAllWallets()
         if (tip == nullptr) return;
         capturedTip = tip;
         tipStakeModifier = tip->nStakeModifier;
-        tipStakeTarget = tip->nStakeTarget;
         tipTime = (uint32_t)tip->nTime;
         tipHash = tip->GetBlockHash();
         tipHeight = tip->nHeight;
@@ -166,8 +164,15 @@ static void TryStakeAllWallets()
     uint32_t nowTime = std::max((uint32_t)GetAdjustedTime(), (uint32_t)tipMedianTimePast + 1);
     uint32_t candidateTime = NextValidStakeTimestamp(nowTime);
 
+    // CONSISTENCY FIX: search kernels against the target that will actually
+    // be enforced when the candidate block (tipHeight+1) is connected, not
+    // a stale copy of tip->nStakeTarget. If tipHeight+1 lands exactly on a
+    // POS_RETARGET_WINDOW checkpoint, AddToBlockIndex will retarget before
+    // validating the kernel -- predicting that here prevents a kernel found
+    // valid pre-checkpoint from being rejected post-checkpoint.
+    uint32_t predictedStakeTarget = PredictNextStakeTarget(capturedTip, candidateTime);
     arith_uint256 target;
-    target.SetCompact(tipStakeTarget);
+    target.SetCompact(predictedStakeTarget);
     if (target == 0) return; // PoS not yet active on this chain
 
     // ADDED (Bug 1 fix): don't even attempt kernel search/block

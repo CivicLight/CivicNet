@@ -131,5 +131,14 @@ arith_uint256 GetNextStakeTargetTiered(const arith_uint256& currentTarget,
                                         int64_t avgSpacing,
                                         int64_t targetSpacing,
                                         const arith_uint256& maxTarget);
+// Predicts what pindexTip's CHILD block's nStakeTarget will be, using the
+// exact same logic AddToBlockIndex applies when that child is actually
+// connected (emergency reset check, then periodic/tiered vs flat retarget
+// depending on gate state) evaluated at candidateTime. Used by the wallet
+// to search kernels against the target that will actually be enforced,
+// instead of a stale copy of pindexTip->nStakeTarget -- prevents kernels
+// found valid pre-checkpoint from being rejected post-checkpoint when the
+// child height lands exactly on a POS_RETARGET_WINDOW boundary.
+uint32_t PredictNextStakeTarget(const CBlockIndex* pindexTip, uint32_t candidateTime);
 
 #endif // CIVICNET_POS_KERNEL_H
