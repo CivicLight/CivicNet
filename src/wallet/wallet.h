@@ -157,6 +157,10 @@ struct CRecipient
     DestinationAddr receiver;
     CAmount nAmount;
     bool fSubtractFeeFromAmount;
+    // Hybrid Value Layer: preserved when an existing token-carrying output
+    // is round-tripped through FundTransaction's recipient reconstruction.
+    uint256 tokenID;
+    uint64_t nTokenAmount = 0;
 
     bool IsMWEB() const noexcept
     {

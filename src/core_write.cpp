@@ -3,6 +3,8 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <core_io.h>
+#include <hash.h>
+#include <token/tokentx.h>
 
 #include <consensus/consensus.h>
 #include <consensus/validation.h>
@@ -238,11 +240,81 @@ void TxToUniv(const CTransaction& tx, const uint256& hashBlock, UniValue& entry,
             UniValue o(UniValue::VOBJ);
             ScriptPubKeyToUniv(txout.scriptPubKey, o, true);
             out.pushKV("scriptPubKey", o);
+
+            if (!txout.tokenID.IsNull()) {
+                UniValue tok(UniValue::VOBJ);
+                tok.pushKV("tokenId", txout.tokenID.GetHex());
+                tok.pushKV("tokenAmount", (uint64_t)txout.nTokenAmount);
+                out.pushKV("token", tok);
+            }
         }
 
         vout.push_back(out);
     }
     entry.pushKV("vout", vout);
+
+    if (tx.nTokenTxType != TOKEN_TX_NONE) {
+        UniValue tokenTx(UniValue::VOBJ);
+        switch (tx.nTokenTxType) {
+        case TOKEN_TX_ISSUE: {
+            const CTokenIssuePayload& p = tx.tokenIssuePayload;
+            tokenTx.pushKV("type", "issue");
+            if (!tx.vin.empty()) {
+                tokenTx.pushKV("tokenId", SerializeHash(tx.vin[0].prevout).GetHex());
+            }
+            tokenTx.pushKV("symbol", p.symbol);
+            tokenTx.pushKV("name", p.name);
+            tokenTx.pushKV("tokenType", p.nTokenType == TOKEN_TYPE_VESTING ? "vesting" : "standard");
+            tokenTx.pushKV("decimals", (int)p.nDecimals);
+            tokenTx.pushKV("initialSupply", (uint64_t)p.nInitialSupply);
+            tokenTx.pushKV("capped", p.IsCapped());
+            if (p.IsCapped()) {
+                tokenTx.pushKV("supplyCap", (uint64_t)p.nSupplyCap);
+                tokenTx.pushKV("mintAuthorityExpiryHeight", (uint64_t)p.nMintAuthorityExpiryHeight);
+            }
+            if (p.IsVesting()) {
+                tokenTx.pushKV("vestingStartHeight", (uint64_t)p.nVestingStartHeight);
+                tokenTx.pushKV("vestingDurationBlocks", (uint64_t)p.nVestingDurationBlocks);
+                tokenTx.pushKV("vestingCliffBlocks", (uint64_t)p.nVestingCliffBlocks);
+            }
+            if (p.HasTransferFee()) {
+                tokenTx.pushKV("feeMode", p.nFeeMode == TOKEN_FEE_MODE_RECIPIENT_CURVE ? "recipient_curve" : "burn_flat");
+            }
+            break;
+        }
+        case TOKEN_TX_CONVERT_OUT: {
+            const CTokenConvertOutPayload& p = tx.tokenConvertOutPayload;
+            tokenTx.pushKV("type", "convert_out");
+            tokenTx.pushKV("tokenId", p.tokenID.GetHex());
+            tokenTx.pushKV("amountBurned", (uint64_t)p.nTokenAmountBurned);
+            break;
+        }
+        case TOKEN_TX_MINT: {
+            const CTokenMintPayload& p = tx.tokenMintPayload;
+            tokenTx.pushKV("type", "mint");
+            tokenTx.pushKV("tokenId", p.tokenID.GetHex());
+            tokenTx.pushKV("amountMinted", (uint64_t)p.nAmountToMint);
+            break;
+        }
+        case TOKEN_TX_VESTING_RELEASE: {
+            const CTokenVestingReleasePayload& p = tx.tokenVestingReleasePayload;
+            tokenTx.pushKV("type", "vesting_release");
+            tokenTx.pushKV("tokenId", p.tokenID.GetHex());
+            tokenTx.pushKV("amountReleased", (uint64_t)p.nAmountToRelease);
+            break;
+        }
+        case TOKEN_TX_BURN: {
+            const CTokenBurnPayload& p = tx.tokenBurnPayload;
+            tokenTx.pushKV("type", "burn");
+            tokenTx.pushKV("tokenId", p.tokenID.GetHex());
+            tokenTx.pushKV("amountBurned", (uint64_t)p.nAmountToBurn);
+            break;
+        }
+        default:
+            break;
+        }
+        entry.pushKV("token", tokenTx);
+    }
 
     if (tx.HasMWEBTx()) {
         UniValue vkern(UniValue::VARR);

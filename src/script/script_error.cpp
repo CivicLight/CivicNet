@@ -117,6 +117,8 @@ std::string ScriptErrorString(const ScriptError serror)
             return "Signature is found in scriptCode";
         case SCRIPT_ERR_TOKEN_RESERVE_LOCKED:
             return "Hybrid Value Layer reserve output is not spendable via script -- redeem via TX_CONVERT_OUT";
+        case SCRIPT_ERR_TOKEN_VESTING_LOCKED:
+            return "Hybrid Value Layer vesting-lock output is not spendable via script -- release via TX_VESTING_RELEASE";
         case SCRIPT_ERR_UNKNOWN_ERROR:
         case SCRIPT_ERR_ERROR_COUNT:
         default: break;

@@ -304,7 +304,13 @@ inline void UnserializeTransaction(TxType& tx, Stream& s) {
     tx.vout.clear();
     /* Try to read the vin. In case the dummy is there, this will be read as an empty vector. */
     s >> tx.vin;
-    if (tx.vin.size() == 0 && fAllowWitness) {
+    // The dummy/flags marker (vin.size()==0) is used by the extended format
+    // for witness data AND for MWEB/token data -- gating this detection on
+    // fAllowWitness alone (as upstream Bitcoin Core does, since it only ever
+    // had witness to worry about) misparses a witness-less tx that still
+    // carries MWEB or token flags when decoded with fAllowWitness=false
+    // (e.g. DecodeHexTx's no-witness fallback parse attempt).
+    if (tx.vin.size() == 0 && (fAllowWitness || fAllowMWEB || fAllowTokens)) {
         /* We read a dummy or an empty vin. */
         s >> flags;
         if (flags != 0) {
@@ -349,6 +355,12 @@ inline void UnserializeTransaction(TxType& tx, Stream& s) {
             s >> tx.tokenIssuePayload;
         } else if (tx.nTokenTxType == TOKEN_TX_CONVERT_OUT) {
             s >> tx.tokenConvertOutPayload;
+        } else if (tx.nTokenTxType == TOKEN_TX_MINT) {
+            s >> tx.tokenMintPayload;
+        } else if (tx.nTokenTxType == TOKEN_TX_VESTING_RELEASE) {
+            s >> tx.tokenVestingReleasePayload;
+        } else if (tx.nTokenTxType == TOKEN_TX_BURN) {
+            s >> tx.tokenBurnPayload;
         }
         for (size_t i = 0; i < tx.vout.size(); i++) {
             s >> tx.vout[i].tokenID;
@@ -416,6 +428,12 @@ inline void SerializeTransaction(const TxType& tx, Stream& s) {
             s << tx.tokenIssuePayload;
         } else if (tx.nTokenTxType == TOKEN_TX_CONVERT_OUT) {
             s << tx.tokenConvertOutPayload;
+        } else if (tx.nTokenTxType == TOKEN_TX_MINT) {
+            s << tx.tokenMintPayload;
+        } else if (tx.nTokenTxType == TOKEN_TX_VESTING_RELEASE) {
+            s << tx.tokenVestingReleasePayload;
+        } else if (tx.nTokenTxType == TOKEN_TX_BURN) {
+            s << tx.tokenBurnPayload;
         }
         for (size_t i = 0; i < tx.vout.size(); i++) {
             s << tx.vout[i].tokenID;
@@ -456,6 +474,9 @@ public:
     const uint8_t nTokenTxType = TOKEN_TX_NONE;
     const CTokenIssuePayload tokenIssuePayload;
     const CTokenConvertOutPayload tokenConvertOutPayload;
+    const CTokenMintPayload tokenMintPayload;
+    const CTokenVestingReleasePayload tokenVestingReleasePayload;
+    const CTokenBurnPayload tokenBurnPayload;
 
     /** Memory only. */
     const bool m_hogEx;
@@ -579,6 +600,9 @@ struct CMutableTransaction
     uint8_t nTokenTxType = TOKEN_TX_NONE;
     CTokenIssuePayload tokenIssuePayload;
     CTokenConvertOutPayload tokenConvertOutPayload;
+    CTokenMintPayload tokenMintPayload;
+    CTokenVestingReleasePayload tokenVestingReleasePayload;
+    CTokenBurnPayload tokenBurnPayload;
 
     /** Memory only. */
     bool m_hogEx = false;

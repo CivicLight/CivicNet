@@ -206,6 +206,7 @@ enum opcodetype
     OP_NOP4 = 0xb3,
     OP_TOKEN_RESERVE = OP_NOP4, // Hybrid Value Layer: repurposed NOP, see interpreter.cpp
     OP_NOP5 = 0xb4,
+    OP_TOKEN_VESTING_LOCK = OP_NOP5, // Hybrid Value Layer: repurposed NOP, see interpreter.cpp
     OP_NOP6 = 0xb5,
     OP_NOP7 = 0xb6,
     OP_NOP8 = 0xb7,

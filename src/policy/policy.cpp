@@ -48,6 +48,12 @@ CAmount GetDustThreshold(const CTxOut& txout, const CFeeRate& dustRelayFeeIn)
 
 bool IsDust(const CTxOut& txout, const CFeeRate& dustRelayFeeIn)
 {
+    // Hybrid Value Layer: token-carrying outputs intentionally use nValue=0
+    // (token amount lives in a separate field) -- exempt them from the
+    // CIVIC dust check, same as OP_RETURN outputs.
+    if (txout.IsTokenOutput()) {
+        return false;
+    }
     return (txout.nValue < GetDustThreshold(txout, dustRelayFeeIn));
 }
 

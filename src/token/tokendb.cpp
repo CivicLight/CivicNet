@@ -11,6 +11,7 @@ static const char DB_TOKEN_REGISTRY = 't';
 static const char DB_TOKEN_COIN     = 'u';
 static const char DB_TOKEN_ADDR     = 'a';
 static const char DB_TOKEN_UNDO     = 'z';
+static const char DB_TOKEN_VOLUME   = 'v';
 
 struct TokenRegistryKey {
     char key;
@@ -48,6 +49,13 @@ struct TokenUndoKey {
     TokenUndoKey() : key(DB_TOKEN_UNDO) {}
     explicit TokenUndoKey(const uint256& h) : key(DB_TOKEN_UNDO), blockHash(h) {}
     SERIALIZE_METHODS(TokenUndoKey, obj) { READWRITE(obj.key, obj.blockHash); }
+};
+// Single global fixed-key entry (no variable field) -- there is only ever
+// one issuance-heights list network-wide, not per-token.
+struct TokenVolumeKey {
+    char key;
+    TokenVolumeKey() : key(DB_TOKEN_VOLUME) {}
+    SERIALIZE_METHODS(TokenVolumeKey, obj) { READWRITE(obj.key); }
 };
 
 } // namespace
@@ -115,7 +123,6 @@ std::vector<COutPoint> CTokenDB::GetTokenOutpointsForAddress(const CScript& scri
         try {
             if (!pcursor->GetKey(key)) break;
         } catch (const std::exception&) {
-            // Cursor ran past this prefix into a differently-shaped key -- stop, don't crash.
             break;
         }
         if (key.key != DB_TOKEN_ADDR || key.scriptHash != scriptHash || key.tokenID != tokenID) break;
@@ -137,4 +144,79 @@ bool CTokenDB::WriteTokenBlockUndo(const uint256& blockHash, const CTokenBlockUn
 bool CTokenDB::EraseTokenBlockUndo(const uint256& blockHash)
 {
     return m_db->Erase(TokenUndoKey(blockHash));
+}
+bool CTokenDB::ReadIssuanceHeights(std::vector<uint32_t>& heights) const
+{
+    return m_db->Read(TokenVolumeKey(), heights);
+}
+bool CTokenDB::WriteIssuanceHeights(const std::vector<uint32_t>& heights)
+{
+    return m_db->Write(TokenVolumeKey(), heights);
+}
+
+// --- Full-registry enumeration ---
+bool CTokenDB::GetAllTokens(std::vector<std::pair<uint256, CTokenRegistryEntry>>& out) const
+{
+    out.clear();
+    std::unique_ptr<CDBIterator> pcursor(m_db->NewIterator());
+    pcursor->Seek(TokenRegistryKey());
+    while (pcursor->Valid()) {
+        TokenRegistryKey key;
+        try {
+            if (!pcursor->GetKey(key)) break;
+        } catch (const std::exception&) {
+            break;
+        }
+        if (key.key != DB_TOKEN_REGISTRY) break;
+        CTokenRegistryEntry entry;
+        if (pcursor->GetValue(entry)) {
+            out.emplace_back(key.tokenID, entry);
+        }
+        pcursor->Next();
+    }
+    return true;
+}
+
+// --- Full token-UTXO-set enumeration ---
+bool CTokenDB::GetAllTokenCoins(std::vector<std::pair<COutPoint, CTokenCoin>>& out) const
+{
+    out.clear();
+    std::unique_ptr<CDBIterator> pcursor(m_db->NewIterator());
+    pcursor->Seek(TokenCoinKey());
+    while (pcursor->Valid()) {
+        TokenCoinKey key;
+        try {
+            if (!pcursor->GetKey(key)) break;
+        } catch (const std::exception&) {
+            break;
+        }
+        if (key.key != DB_TOKEN_COIN) break;
+        CTokenCoin coin;
+        if (pcursor->GetValue(coin)) {
+            out.emplace_back(key.outpoint, coin);
+        }
+        pcursor->Next();
+    }
+    return true;
+}
+
+// --- Address index, all tokens for one address ---
+std::vector<std::pair<uint256, COutPoint>> CTokenDB::GetAllTokenOutpointsForAddress(const CScript& scriptPubKey) const
+{
+    std::vector<std::pair<uint256, COutPoint>> result;
+    uint160 scriptHash = Hash160(scriptPubKey);
+    std::unique_ptr<CDBIterator> pcursor(m_db->NewIterator());
+    pcursor->Seek(TokenAddrKey(scriptHash, uint256(), COutPoint()));
+    while (pcursor->Valid()) {
+        TokenAddrKey key;
+        try {
+            if (!pcursor->GetKey(key)) break;
+        } catch (const std::exception&) {
+            break;
+        }
+        if (key.key != DB_TOKEN_ADDR || key.scriptHash != scriptHash) break;
+        result.emplace_back(key.tokenID, key.outpoint);
+        pcursor->Next();
+    }
+    return result;
 }

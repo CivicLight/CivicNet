@@ -417,7 +417,7 @@ static void UpdateMempoolForReorg(CTxMemPool& mempool, DisconnectedBlockTransact
 // Used to avoid mempool polluting consensus critical paths if CCoinsViewMempool
 // were somehow broken and returning the wrong scriptPubKeys
 static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, TxValidationState& state, const CCoinsViewCache& view, const CTxMemPool& pool,
-                 unsigned int flags, PrecomputedTransactionData& txdata) EXCLUSIVE_LOCKS_REQUIRED(cs_main) {
+                 unsigned int flags, PrecomputedTransactionData& txdata, const std::set<unsigned int>* skipInputs = nullptr) EXCLUSIVE_LOCKS_REQUIRED(cs_main) {
     AssertLockHeld(cs_main);
 
     // pool.cs should be locked already, but go ahead and re-take the lock here
@@ -448,7 +448,7 @@ static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, TxValidationS
     }
 
     // Call CheckInputScripts() to cache signature and script validity against current tip consensus rules.
-    return CheckInputScripts(tx, state, view, flags, /* cacheSigStore = */ true, /* cacheFullSciptStore = */ true, txdata);
+    return CheckInputScripts(tx, state, view, flags, /* cacheSigStore = */ true, /* cacheFullSciptStore = */ true, txdata, nullptr, skipInputs);
 }
 
 namespace {
@@ -963,9 +963,28 @@ bool MemPoolAccept::PolicyScriptChecks(ATMPArgs& args, Workspace& ws, Precompute
 
     constexpr unsigned int scriptVerifyFlags = STANDARD_SCRIPT_VERIFY_FLAGS;
 
+    // Hybrid Value Layer: token txs may have inputs (reserve-redemption)
+    // that are intentionally unspendable via normal script evaluation --
+    // validated instead via ApplyTokenTx's consensus rules. Run the same
+    // check the block-connect path uses to compute which inputs to skip,
+    // using a throwaway token-view cache so nothing is persisted here.
+    std::set<unsigned int> tokenSkipInputs;
+    {
+        // No nTokenTxType guard here: a plain transfer (TOKEN_TX_NONE) can
+        // still carry token-colored inputs/outputs, and ApplyTokenTx itself
+        // cheaply no-ops (returns true immediately) when a tx has no token
+        // activity at all -- see its TOKEN_TX_NONE branch.
+        CTokenViewCache tokenViewTemp(::ChainstateActive().TokenDB());
+        CTokenBlockUndo tokenUndoDummy;
+        TxValidationState tokenState;
+        if (!ApplyTokenTx(tx, tokenViewTemp, m_view, ::ChainActive().Height() + 1, tokenSkipInputs, tokenUndoDummy, tokenState)) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, tokenState.GetRejectReason(), tokenState.GetDebugMessage());
+        }
+    }
+
     // Check input scripts and signatures.
     // This is done last to help prevent CPU exhaustion denial-of-service attacks.
-    if (!CheckInputScripts(tx, state, m_view, scriptVerifyFlags, true, false, txdata)) {
+    if (!CheckInputScripts(tx, state, m_view, scriptVerifyFlags, true, false, txdata, nullptr, tokenSkipInputs.empty() ? nullptr : &tokenSkipInputs)) {
         // SCRIPT_VERIFY_CLEANSTACK requires SCRIPT_VERIFY_WITNESS, so we
         // need to turn both off, and compare against just turning off CLEANSTACK
         // to see if the failure is specifically due to witness validation.
@@ -1006,7 +1025,17 @@ bool MemPoolAccept::ConsensusScriptChecks(ATMPArgs& args, Workspace& ws, Precomp
     // invalid blocks (using TestBlockValidity), however allowing such
     // transactions into the mempool can be exploited as a DoS attack.
     unsigned int currentBlockScriptVerifyFlags = GetBlockScriptFlags(::ChainActive().Tip(), chainparams.GetConsensus());
-    if (!CheckInputsFromMempoolAndCache(tx, state, m_view, m_pool, currentBlockScriptVerifyFlags, txdata)) {
+    std::set<unsigned int> tokenSkipInputsConsensus;
+    {
+        // Same reasoning as PolicyScriptChecks above: no nTokenTxType guard.
+        CTokenViewCache tokenViewTemp2(::ChainstateActive().TokenDB());
+        CTokenBlockUndo tokenUndoDummy2;
+        TxValidationState tokenState2;
+        if (!ApplyTokenTx(tx, tokenViewTemp2, m_view, ::ChainActive().Height() + 1, tokenSkipInputsConsensus, tokenUndoDummy2, tokenState2)) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, tokenState2.GetRejectReason(), tokenState2.GetDebugMessage());
+        }
+    }
+    if (!CheckInputsFromMempoolAndCache(tx, state, m_view, m_pool, currentBlockScriptVerifyFlags, txdata, tokenSkipInputsConsensus.empty() ? nullptr : &tokenSkipInputsConsensus)) {
         return error("%s: BUG! PLEASE REPORT THIS! CheckInputScripts failed against latest-block but not STANDARD flags %s, %s",
                 __func__, hash.ToString(), state.ToString());
     }
@@ -2020,6 +2049,7 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex* pindex, const Consens
     // Start enforcing Hybrid Value Layer token reserve custody
     if (pindex->nTime >= HYBRID_VALUE_LAYER_ACTIVATION_TIME) {
         flags |= SCRIPT_VERIFY_TOKEN_RESERVE;
+        flags |= SCRIPT_VERIFY_TOKEN_VESTING_LOCK;
     }
 
     // Start enforcing Taproot using versionbits logic.
@@ -2325,7 +2355,8 @@ bool CChainState::ConnectBlock(const CBlock& block, BlockValidationState& state,
         }
 
         std::set<unsigned int> tokenSkipInputs;
-        if (!tx.IsCoinBase() && tx.nTokenTxType != TOKEN_TX_NONE) {
+        if (!tx.IsCoinBase()) {
+            // No nTokenTxType guard here either -- see PolicyScriptChecks comment.
             TxValidationState token_tx_state;
             if (!ApplyTokenTx(tx, tokenView, view, pindex->nHeight, tokenSkipInputs, blockTokenUndo, token_tx_state)) {
                 state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
