@@ -310,6 +310,15 @@ void TxToUniv(const CTransaction& tx, const uint256& hashBlock, UniValue& entry,
             tokenTx.pushKV("amountBurned", (uint64_t)p.nAmountToBurn);
             break;
         }
+        case TOKEN_TX_METADATA_UPDATE: {
+            const CTokenMetadataUpdatePayload& p = tx.tokenMetadataUpdatePayload;
+            tokenTx.pushKV("type", "metadata_update");
+            tokenTx.pushKV("tokenId", p.tokenID.GetHex());
+            tokenTx.pushKV("metadataUri", p.metadataUri);
+            tokenTx.pushKV("metadataHash", p.metadataHash.GetHex());
+            tokenTx.pushKV("setImmutable", p.fSetImmutable);
+            break;
+        }
         default:
             break;
         }

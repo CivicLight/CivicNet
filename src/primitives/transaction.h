@@ -361,6 +361,8 @@ inline void UnserializeTransaction(TxType& tx, Stream& s) {
             s >> tx.tokenVestingReleasePayload;
         } else if (tx.nTokenTxType == TOKEN_TX_BURN) {
             s >> tx.tokenBurnPayload;
+        } else if (tx.nTokenTxType == TOKEN_TX_METADATA_UPDATE) {
+            s >> tx.tokenMetadataUpdatePayload;
         }
         for (size_t i = 0; i < tx.vout.size(); i++) {
             s >> tx.vout[i].tokenID;
@@ -434,6 +436,8 @@ inline void SerializeTransaction(const TxType& tx, Stream& s) {
             s << tx.tokenVestingReleasePayload;
         } else if (tx.nTokenTxType == TOKEN_TX_BURN) {
             s << tx.tokenBurnPayload;
+        } else if (tx.nTokenTxType == TOKEN_TX_METADATA_UPDATE) {
+            s << tx.tokenMetadataUpdatePayload;
         }
         for (size_t i = 0; i < tx.vout.size(); i++) {
             s << tx.vout[i].tokenID;
@@ -477,6 +481,7 @@ public:
     const CTokenMintPayload tokenMintPayload;
     const CTokenVestingReleasePayload tokenVestingReleasePayload;
     const CTokenBurnPayload tokenBurnPayload;
+    const CTokenMetadataUpdatePayload tokenMetadataUpdatePayload;
 
     /** Memory only. */
     const bool m_hogEx;
@@ -603,6 +608,7 @@ struct CMutableTransaction
     CTokenMintPayload tokenMintPayload;
     CTokenVestingReleasePayload tokenVestingReleasePayload;
     CTokenBurnPayload tokenBurnPayload;
+    CTokenMetadataUpdatePayload tokenMetadataUpdatePayload;
 
     /** Memory only. */
     bool m_hogEx = false;

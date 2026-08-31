@@ -44,9 +44,13 @@ public:
     uint32_t    nFeeDecayDurationBlocks = 0;
     uint160     feeRecipientHash160;
     uint16_t    nFeeBpsBurn = 0;
+    std::string metadataUri;
+    uint256     metadataHash;
+    bool        fMetadataImmutable = false;
 
     bool IsCapped() const { return (nFlags & TOKEN_FLAG_CAPPED) != 0; }
     bool HasTransferFee() const { return (nFlags & TOKEN_FLAG_TRANSFER_FEE) != 0; }
+    bool HasMetadata() const { return (nFlags & TOKEN_FLAG_HAS_METADATA) != 0; }
 
     SERIALIZE_METHODS(CTokenRegistryEntry, obj)
     {
@@ -58,7 +62,8 @@ public:
                   obj.nVestingStartHeight, obj.nVestingDurationBlocks, obj.nVestingCliffBlocks,
                   obj.nSupplyCap, obj.nMintAuthorityExpiryHeight,
                   obj.nFeeMode, obj.nFeeBpsStart, obj.nFeeBpsEnd, obj.nFeeDecayDurationBlocks,
-                  obj.feeRecipientHash160, obj.nFeeBpsBurn);
+                  obj.feeRecipientHash160, obj.nFeeBpsBurn,
+                  obj.metadataUri, obj.metadataHash, obj.fMetadataImmutable);
     }
 };
 

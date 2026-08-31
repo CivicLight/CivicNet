@@ -32,6 +32,8 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "createtokenconverttx", 1, "token" },
     { "createtokenminttx", 0, "inputs" },
     { "createtokenminttx", 1, "token" },
+    { "createtokenmetadataupdatetx", 0, "inputs" },
+    { "createtokenmetadataupdatetx", 1, "token" },
     { "createtokentransfertx", 0, "inputs" },
     { "createtokentransfertx", 1, "outputs" },
     { "createtokenvestingreleasetx", 0, "inputs" },

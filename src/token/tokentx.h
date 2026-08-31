@@ -16,6 +16,7 @@ static const unsigned int MAX_TOKEN_SYMBOL_LEN = 12;
 static const unsigned int MAX_TOKEN_NAME_LEN   = 32;
 static const uint8_t      MAX_TOKEN_DECIMALS   = 8;
 static const uint64_t     MAX_TOKEN_SUPPLY_CAP = 1000000000ULL; // 1 billion (Tier 1 cap)
+static const unsigned int MAX_METADATA_URI_LEN = 256; // metadataUri max length, off-chain content (IPFS/HTTP) pointer
 
 // TODO: set real deploy time before mainnet activation (0 = active immediately, dev/test only)
 static const int64_t HYBRID_VALUE_LAYER_ACTIVATION_TIME = 0;
@@ -169,6 +170,7 @@ enum TokenTxType : uint8_t {
     TOKEN_TX_MINT         = 3, // supply top-up, TOKEN_TYPE_CAPPED only, issuer-authorized
     TOKEN_TX_VESTING_RELEASE = 4, // claim vested portion, beneficiary-authorized
     TOKEN_TX_BURN         = 5, // permanently destroy owned tokens, self-authorized (holder's own signature only, no issuer/authority involvement)
+    TOKEN_TX_METADATA_UPDATE = 6, // update metadataUri/metadataHash, issuer-authorized (mirrors TOKEN_TX_MINT's auth pattern); rejected if fMetadataImmutable is set
 };
 
 enum TokenType : uint8_t {
@@ -189,7 +191,8 @@ enum TokenFlags : uint32_t {
     TOKEN_FLAG_HAS_POE_ANCHOR = (1 << 0),
     TOKEN_FLAG_CAPPED         = (1 << 1), // mintable up to nSupplyCap, issuer-authorized
     TOKEN_FLAG_TRANSFER_FEE   = (1 << 2), // fee-on-transfer, mode/params fixed at issuance -- see TokenFeeMode
-    // bit3..31 reserved for Tier 2/3
+    TOKEN_FLAG_HAS_METADATA   = (1 << 3), // metadataUri/metadataHash present, updatable via TOKEN_TX_METADATA_UPDATE unless fMetadataImmutable
+    // bit4..31 reserved for Tier 2/3
 };
 
 /** Transfer-fee mode, fixed permanently at issuance -- there is no update
@@ -217,6 +220,11 @@ public:
     uint64_t    nInitialSupply;
     uint32_t    nFlags;
     uint256     poeAnchorHash;       // all-zero unless TOKEN_FLAG_HAS_POE_ANCHOR is set
+
+    // only serialized when nFlags & TOKEN_FLAG_HAS_METADATA
+    std::string metadataUri;         // off-chain pointer (IPFS/HTTP), max MAX_METADATA_URI_LEN
+    uint256     metadataHash;        // SHA256 of the off-chain metadata JSON content, for tamper detection
+    bool        fMetadataImmutable;  // if true, TOKEN_TX_METADATA_UPDATE is permanently rejected for this token
 
     // only serialized when nTokenType == TOKEN_TYPE_VESTING (see SERIALIZE_METHODS)
     uint32_t    nVestingStartHeight;
@@ -255,6 +263,9 @@ public:
         nInitialSupply = 0;
         nFlags = 0;
         poeAnchorHash.SetNull();
+        metadataUri.clear();
+        metadataHash.SetNull();
+        fMetadataImmutable = false;
         nVestingStartHeight = 0;
         nVestingDurationBlocks = 0;
         nVestingCliffBlocks = 0;
@@ -272,6 +283,7 @@ public:
     bool IsCapped() const { return (nFlags & TOKEN_FLAG_CAPPED) != 0; }
     bool HasPoEAnchor() const { return (nFlags & TOKEN_FLAG_HAS_POE_ANCHOR) != 0; }
     bool HasTransferFee() const { return (nFlags & TOKEN_FLAG_TRANSFER_FEE) != 0; }
+    bool HasMetadata() const { return (nFlags & TOKEN_FLAG_HAS_METADATA) != 0; }
 
     SERIALIZE_METHODS(CTokenIssuePayload, obj)
     {
@@ -282,6 +294,11 @@ public:
         READWRITE(obj.nInitialSupply);
         READWRITE(obj.nFlags);
         READWRITE(obj.poeAnchorHash);
+        if (obj.nFlags & TOKEN_FLAG_HAS_METADATA) {
+            READWRITE(obj.metadataUri);
+            READWRITE(obj.metadataHash);
+            READWRITE(obj.fMetadataImmutable);
+        }
         // CONDITIONAL: safe because obj.nTokenType/nFlags are already assigned
         // above this point, both when serializing (obj is fully populated from
         // the start) and when deserializing (both fields were just read) --
@@ -333,6 +350,37 @@ public:
     {
         READWRITE(obj.tokenID);
         READWRITE(obj.nAmountToMint);
+    }
+};
+
+/** TOKEN_TX_METADATA_UPDATE payload -- updates metadataUri/metadataHash for an
+ *  existing token. Authorized by an input spending from the token's
+ *  issuerScriptPubKey (same pattern as TOKEN_TX_MINT). Rejected at consensus
+ *  level if the token's fMetadataImmutable flag is already set. */
+class CTokenMetadataUpdatePayload
+{
+public:
+    uint256     tokenID;
+    std::string metadataUri;
+    uint256     metadataHash;
+    bool        fSetImmutable; // if true, sets fMetadataImmutable=true on this same update (one-way lock)
+
+    CTokenMetadataUpdatePayload() { SetNull(); }
+
+    void SetNull()
+    {
+        tokenID.SetNull();
+        metadataUri.clear();
+        metadataHash.SetNull();
+        fSetImmutable = false;
+    }
+
+    SERIALIZE_METHODS(CTokenMetadataUpdatePayload, obj)
+    {
+        READWRITE(obj.tokenID);
+        READWRITE(obj.metadataUri);
+        READWRITE(obj.metadataHash);
+        READWRITE(obj.fSetImmutable);
     }
 };
 

@@ -39,6 +39,13 @@ static UniValue TokenRegistryEntryToUniValue(const uint256& tokenID, const CToke
 
     result.pushKV("issueHeight", (int)entry.nIssueHeight);
     result.pushKV("issueTxid", entry.issueTxid.GetHex());
+    if (entry.HasMetadata()) {
+        UniValue metadata(UniValue::VOBJ);
+        metadata.pushKV("uri", entry.metadataUri);
+        metadata.pushKV("hash", entry.metadataHash.GetHex());
+        metadata.pushKV("immutable", entry.fMetadataImmutable);
+        result.pushKV("metadata", metadata);
+    }
 
     if (entry.nTokenType == TOKEN_TYPE_VESTING) {
         UniValue vesting(UniValue::VOBJ);
@@ -825,6 +832,95 @@ static RPCHelpMan createtokenminttx()
     };
 }
 
+static RPCHelpMan createtokenmetadataupdatetx()
+{
+    return RPCHelpMan{"createtokenmetadataupdatetx",
+                "\nBuilds an unsigned, unfunded raw transaction that updates a token's\n"
+                "off-chain metadata pointer (metadataUri) and content hash (metadataHash).\n"
+                "\"inputs\" must include at least one UTXO spendable by the token's issuer\n"
+                "address, same authorization pattern as createtokenminttx. Once a token's\n"
+                "metadata is set immutable (via setImmutable=true on any update), this RPC\n"
+                "will be rejected at the consensus level for that token from then on.\n",
+                {
+                    {"inputs", RPCArg::Type::ARR, RPCArg::Optional::NO, "Inputs, at least one of which must be spendable by the token's issuer address.",
+                        {
+                            {"", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "",
+                                {
+                                    {"txid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction id"},
+                                    {"vout", RPCArg::Type::NUM, RPCArg::Optional::NO, "The output number"},
+                                },
+                                },
+                        },
+                        },
+                    {"token", RPCArg::Type::OBJ, RPCArg::Optional::NO, "Metadata update details",
+                        {
+                            {"tokenid", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The token ID"},
+                            {"metadataUri", RPCArg::Type::STR, RPCArg::Optional::NO, "Off-chain metadata pointer (IPFS/HTTP), max 256 chars"},
+                            {"metadataHash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "SHA256 hash of the off-chain metadata JSON content"},
+                            {"setImmutable", RPCArg::Type::BOOL, /* default */ "false", "If true, permanently locks this token's metadata -- no further createtokenmetadataupdatetx will be accepted for it"},
+                        },
+                        },
+                },
+                RPCResult{
+                    RPCResult::Type::STR_HEX, "", "the unsigned, unfunded raw transaction hex"
+                },
+                RPCExamples{
+                    HelpExampleCli("createtokenmetadataupdatetx",
+                        "\"[{\\\"txid\\\":\\\"issuerutxo\\\",\\\"vout\\\":0}]\" "
+                        "\"{\\\"tokenid\\\":\\\"a1b2c3...\\\",\\\"metadataUri\\\":\\\"ipfs://Qm...\\\","
+                        "\\\"metadataHash\\\":\\\"deadbeef...\\\"}\"")
+                },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    if (request.params[0].isNull() || request.params[0].get_array().size() == 0) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "inputs must be a non-empty array");
+    }
+
+    UniValue emptyOutputs(UniValue::VOBJ);
+    CMutableTransaction rawTx = ConstructTransaction(request.params[0], emptyOutputs, NullUniValue, false);
+
+    const UniValue& tokenArg = request.params[1];
+    if (!tokenArg.isObject()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "token object is required");
+    }
+
+    uint256 tokenID(ParseHashV(tokenArg["tokenid"], "tokenid"));
+    std::string metadataUri = tokenArg["metadataUri"].get_str();
+    if (metadataUri.size() > MAX_METADATA_URI_LEN) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "metadataUri exceeds max length of " + std::to_string(MAX_METADATA_URI_LEN));
+    }
+    uint256 metadataHash(ParseHashV(tokenArg["metadataHash"], "metadataHash"));
+    bool fSetImmutable = tokenArg["setImmutable"].isNull() ? false : tokenArg["setImmutable"].get_bool();
+
+    {
+        LOCK(cs_main);
+        CTokenRegistryEntry entry;
+        if (!::ChainstateActive().TokenDB().ReadTokenRegistry(tokenID, entry)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown token ID");
+        }
+        if (entry.fMetadataImmutable) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "this token's metadata is permanently immutable");
+        }
+    }
+
+    rawTx.nTokenTxType = TOKEN_TX_METADATA_UPDATE;
+    rawTx.tokenMetadataUpdatePayload.tokenID = tokenID;
+    rawTx.tokenMetadataUpdatePayload.metadataUri = metadataUri;
+    rawTx.tokenMetadataUpdatePayload.metadataHash = metadataHash;
+    rawTx.tokenMetadataUpdatePayload.fSetImmutable = fSetImmutable;
+
+    // This tx type has no natural token-colored output (unlike mint/burn),
+    // but fundrawtransaction requires at least one output to operate on --
+    // add a zero-value OP_RETURN anchor, same pattern as the TX_ISSUE
+    // anti-spam burn fee output elsewhere in this file.
+    CTxOut anchorOut(0, CScript() << OP_RETURN);
+    rawTx.vout.push_back(anchorOut);
+
+    return EncodeHexTx(CTransaction(rawTx));
+},
+    };
+}
+
 static RPCHelpMan createtokentransfertx()
 {
     return RPCHelpMan{"createtokentransfertx",
@@ -1246,6 +1342,7 @@ static const CRPCCommand commands[] =
     { "token",    "createtokenissuetx",          &createtokenissuetx,          {"inputs", "token"} },
     { "token",    "createtokenconverttx",        &createtokenconverttx,        {"inputs", "token"} },
     { "token",    "createtokenminttx",           &createtokenminttx,           {"inputs", "token"} },
+    { "token",    "createtokenmetadataupdatetx", &createtokenmetadataupdatetx, {"inputs", "token"} },
     { "token",    "createtokentransfertx",       &createtokentransfertx,       {"inputs", "outputs"} },
     { "token",    "createtokenvestingreleasetx", &createtokenvestingreleasetx, {"inputs", "token"} },
     { "token",    "createtokenburntx",           &createtokenburntx,           {"inputs", "token"} },

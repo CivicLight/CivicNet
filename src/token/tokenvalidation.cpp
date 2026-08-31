@@ -331,6 +331,41 @@ bool ApplyTokenTx(const CTransaction& tx, CTokenViewCache& tokenView, const CCoi
         tokenView.SetTokenRegistry(p.tokenID, entry);
         return true;
     }
+    if (tx.nTokenTxType == TOKEN_TX_METADATA_UPDATE) {
+        const CTokenMetadataUpdatePayload& p = tx.tokenMetadataUpdatePayload;
+        CTokenRegistryEntry entry;
+        if (!tokenView.GetTokenRegistry(p.tokenID, entry)) {
+            return tx_state.Invalid(TxValidationResult::TX_CONSENSUS, "token-metadata-unknown-token");
+        }
+        if (entry.fMetadataImmutable) {
+            return tx_state.Invalid(TxValidationResult::TX_CONSENSUS, "token-metadata-immutable");
+        }
+        if (p.metadataUri.size() > MAX_METADATA_URI_LEN) {
+            return tx_state.Invalid(TxValidationResult::TX_CONSENSUS, "token-metadata-uri-too-long");
+        }
+        // --- Issuer authorization: same pattern as TOKEN_TX_MINT -- one of the
+        //     tx's inputs must spend from the token's issuerScriptPubKey. ---
+        bool fIssuerInputFound = false;
+        for (const CTxIn& txin : tx.vin) {
+            const Coin& coin = view.AccessCoin(txin.prevout);
+            if (!coin.IsSpent() && coin.out.scriptPubKey == entry.issuerScriptPubKey) {
+                fIssuerInputFound = true;
+                break;
+            }
+        }
+        if (!fIssuerInputFound) {
+            return tx_state.Invalid(TxValidationResult::TX_CONSENSUS, "token-metadata-not-issuer-authorized");
+        }
+        txUndo.prevRegistryState.push_back(std::make_pair(p.tokenID, entry));
+        entry.nFlags |= TOKEN_FLAG_HAS_METADATA;
+        entry.metadataUri = p.metadataUri;
+        entry.metadataHash = p.metadataHash;
+        if (p.fSetImmutable) {
+            entry.fMetadataImmutable = true;
+        }
+        tokenView.SetTokenRegistry(p.tokenID, entry);
+        return true;
+    }
 
     if (tx.nTokenTxType == TOKEN_TX_BURN) {
         const CTokenBurnPayload& p = tx.tokenBurnPayload;
