@@ -263,6 +263,8 @@ void TxAssembler::AddRecipientOutputs(InProcessTx& new_tx)
         }
 
         CTxOut txout(recipient.nAmount, recipient.GetScript());
+        txout.tokenID = recipient.tokenID;
+        txout.nTokenAmount = recipient.nTokenAmount;
 
         if (recipient.fSubtractFeeFromAmount) {
             assert(new_tx.subtract_fee_from_amount != 0);

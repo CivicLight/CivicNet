@@ -49,6 +49,8 @@ CTxOut::CTxOut(const CAmount& nValueIn, CScript scriptPubKeyIn)
 {
     nValue = nValueIn;
     scriptPubKey = scriptPubKeyIn;
+    tokenID.SetNull();
+    nTokenAmount = 0;
 }
 
 std::string CTxOut::ToString() const
@@ -57,7 +59,7 @@ std::string CTxOut::ToString() const
 }
 
 CMutableTransaction::CMutableTransaction() : nVersion(CTransaction::CURRENT_VERSION), nLockTime(0), m_hogEx(false) {}
-CMutableTransaction::CMutableTransaction(const CTransaction& tx) : vin(tx.vin), vout(tx.vout), nVersion(tx.nVersion), nLockTime(tx.nLockTime), mweb_tx(tx.mweb_tx), m_hogEx(tx.m_hogEx) {}
+CMutableTransaction::CMutableTransaction(const CTransaction& tx) : vin(tx.vin), vout(tx.vout), nVersion(tx.nVersion), nLockTime(tx.nLockTime), mweb_tx(tx.mweb_tx), nTokenTxType(tx.nTokenTxType), tokenIssuePayload(tx.tokenIssuePayload), tokenConvertOutPayload(tx.tokenConvertOutPayload), tokenMintPayload(tx.tokenMintPayload), tokenVestingReleasePayload(tx.tokenVestingReleasePayload), tokenBurnPayload(tx.tokenBurnPayload), tokenMetadataUpdatePayload(tx.tokenMetadataUpdatePayload), m_hogEx(tx.m_hogEx) {}
 
 uint256 CMutableTransaction::GetHash() const
 {
@@ -93,9 +95,9 @@ uint256 CTransaction::ComputeWitnessHash() const
 }
 
 /* For backward compatibility, the hash is initialized to 0. TODO: remove the need for this default constructor entirely. */
-CTransaction::CTransaction() : vin(), vout(), nVersion(CTransaction::CURRENT_VERSION), nLockTime(0), m_hogEx(false), hash{}, m_witness_hash{} {}
-CTransaction::CTransaction(const CMutableTransaction& tx) : vin(tx.vin), vout(tx.vout), nVersion(tx.nVersion), nLockTime(tx.nLockTime), mweb_tx(tx.mweb_tx), m_hogEx(tx.m_hogEx), hash{ComputeHash()}, m_witness_hash{ComputeWitnessHash()} {}
-CTransaction::CTransaction(CMutableTransaction&& tx) : vin(std::move(tx.vin)), vout(std::move(tx.vout)), nVersion(tx.nVersion), nLockTime(tx.nLockTime), mweb_tx(tx.mweb_tx), m_hogEx(tx.m_hogEx), hash{ComputeHash()}, m_witness_hash{ComputeWitnessHash()} {}
+CTransaction::CTransaction() : vin(), vout(), nVersion(CTransaction::CURRENT_VERSION), nLockTime(0), nTokenTxType(TOKEN_TX_NONE), m_hogEx(false), hash{}, m_witness_hash{} {}
+CTransaction::CTransaction(const CMutableTransaction& tx) : vin(tx.vin), vout(tx.vout), nVersion(tx.nVersion), nLockTime(tx.nLockTime), mweb_tx(tx.mweb_tx), nTokenTxType(tx.nTokenTxType), tokenIssuePayload(tx.tokenIssuePayload), tokenConvertOutPayload(tx.tokenConvertOutPayload), tokenMintPayload(tx.tokenMintPayload), tokenVestingReleasePayload(tx.tokenVestingReleasePayload), tokenBurnPayload(tx.tokenBurnPayload), tokenMetadataUpdatePayload(tx.tokenMetadataUpdatePayload), m_hogEx(tx.m_hogEx), hash{ComputeHash()}, m_witness_hash{ComputeWitnessHash()} {}
+CTransaction::CTransaction(CMutableTransaction&& tx) : vin(std::move(tx.vin)), vout(std::move(tx.vout)), nVersion(tx.nVersion), nLockTime(tx.nLockTime), mweb_tx(tx.mweb_tx), nTokenTxType(tx.nTokenTxType), tokenIssuePayload(std::move(tx.tokenIssuePayload)), tokenConvertOutPayload(std::move(tx.tokenConvertOutPayload)), tokenMintPayload(std::move(tx.tokenMintPayload)), tokenVestingReleasePayload(std::move(tx.tokenVestingReleasePayload)), tokenBurnPayload(std::move(tx.tokenBurnPayload)), tokenMetadataUpdatePayload(std::move(tx.tokenMetadataUpdatePayload)), m_hogEx(tx.m_hogEx), hash{ComputeHash()}, m_witness_hash{ComputeWitnessHash()} {}
 
 CAmount CTransaction::GetValueOut() const
 {

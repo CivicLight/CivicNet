@@ -12,6 +12,7 @@
 
 #include <amount.h>
 #include <coins.h>
+#include <token/tokendb.h>
 #include <crypto/common.h> // for ReadLE64
 #include <fs.h>
 #include <optional.h>
@@ -474,6 +475,9 @@ public:
     //! The lowest level of the CoinsViews cache hierarchy sits in a leveldb database on disk.
     //! All unspent coins reside in this store.
     CCoinsViewDB m_dbview GUARDED_BY(cs_main);
+    //! Hybrid Value Layer token registry/token-UTXO/undo storage -- its own
+    //! leveldb instance (tokendb/), independently reindexable of chainstate/.
+    CTokenDB m_tokendb GUARDED_BY(cs_main);
 
     //! This view wraps access to the leveldb instance and handles read errors gracefully.
     CCoinsViewErrorCatcher m_catcherview GUARDED_BY(cs_main);
@@ -611,6 +615,11 @@ public:
     CCoinsViewDB& CoinsDB() EXCLUSIVE_LOCKS_REQUIRED(cs_main)
     {
         return m_coins_views->m_dbview;
+    }
+    //! @returns A reference to the on-disk Hybrid Value Layer token database.
+    CTokenDB& TokenDB() EXCLUSIVE_LOCKS_REQUIRED(cs_main)
+    {
+        return m_coins_views->m_tokendb;
     }
 
     //! @returns A reference to a wrapped view of the in-memory UTXO set that

@@ -16,6 +16,7 @@
 #include <consensus/tx_check.h>
 #include <consensus/tx_verify.h>
 #include <consensus/validation.h>
+#include <token/tokenvalidation.h>
 #include <cuckoocache.h>
 #include <flatfile.h>
 #include <hash.h>
@@ -204,7 +205,7 @@ CBlockIndex* FindForkInGlobalIndex(const CChain& chain, const CBlockLocator& loc
 
 std::unique_ptr<CBlockTreeDB> pblocktree;
 
-bool CheckInputScripts(const CTransaction& tx, TxValidationState &state, const CCoinsViewCache &inputs, unsigned int flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks = nullptr);
+bool CheckInputScripts(const CTransaction& tx, TxValidationState &state, const CCoinsViewCache &inputs, unsigned int flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks = nullptr, const std::set<unsigned int>* skipInputs = nullptr);
 static FILE* OpenUndoFile(const FlatFilePos &pos, bool fReadOnly = false);
 static FlatFileSeq BlockFileSeq();
 static FlatFileSeq UndoFileSeq();
@@ -416,7 +417,7 @@ static void UpdateMempoolForReorg(CTxMemPool& mempool, DisconnectedBlockTransact
 // Used to avoid mempool polluting consensus critical paths if CCoinsViewMempool
 // were somehow broken and returning the wrong scriptPubKeys
 static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, TxValidationState& state, const CCoinsViewCache& view, const CTxMemPool& pool,
-                 unsigned int flags, PrecomputedTransactionData& txdata) EXCLUSIVE_LOCKS_REQUIRED(cs_main) {
+                 unsigned int flags, PrecomputedTransactionData& txdata, const std::set<unsigned int>* skipInputs = nullptr) EXCLUSIVE_LOCKS_REQUIRED(cs_main) {
     AssertLockHeld(cs_main);
 
     // pool.cs should be locked already, but go ahead and re-take the lock here
@@ -447,7 +448,7 @@ static bool CheckInputsFromMempoolAndCache(const CTransaction& tx, TxValidationS
     }
 
     // Call CheckInputScripts() to cache signature and script validity against current tip consensus rules.
-    return CheckInputScripts(tx, state, view, flags, /* cacheSigStore = */ true, /* cacheFullSciptStore = */ true, txdata);
+    return CheckInputScripts(tx, state, view, flags, /* cacheSigStore = */ true, /* cacheFullSciptStore = */ true, txdata, nullptr, skipInputs);
 }
 
 namespace {
@@ -962,9 +963,28 @@ bool MemPoolAccept::PolicyScriptChecks(ATMPArgs& args, Workspace& ws, Precompute
 
     constexpr unsigned int scriptVerifyFlags = STANDARD_SCRIPT_VERIFY_FLAGS;
 
+    // Hybrid Value Layer: token txs may have inputs (reserve-redemption)
+    // that are intentionally unspendable via normal script evaluation --
+    // validated instead via ApplyTokenTx's consensus rules. Run the same
+    // check the block-connect path uses to compute which inputs to skip,
+    // using a throwaway token-view cache so nothing is persisted here.
+    std::set<unsigned int> tokenSkipInputs;
+    {
+        // No nTokenTxType guard here: a plain transfer (TOKEN_TX_NONE) can
+        // still carry token-colored inputs/outputs, and ApplyTokenTx itself
+        // cheaply no-ops (returns true immediately) when a tx has no token
+        // activity at all -- see its TOKEN_TX_NONE branch.
+        CTokenViewCache tokenViewTemp(::ChainstateActive().TokenDB());
+        CTokenBlockUndo tokenUndoDummy;
+        TxValidationState tokenState;
+        if (!ApplyTokenTx(tx, tokenViewTemp, m_view, ::ChainActive().Height() + 1, tokenSkipInputs, tokenUndoDummy, tokenState)) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, tokenState.GetRejectReason(), tokenState.GetDebugMessage());
+        }
+    }
+
     // Check input scripts and signatures.
     // This is done last to help prevent CPU exhaustion denial-of-service attacks.
-    if (!CheckInputScripts(tx, state, m_view, scriptVerifyFlags, true, false, txdata)) {
+    if (!CheckInputScripts(tx, state, m_view, scriptVerifyFlags, true, false, txdata, nullptr, tokenSkipInputs.empty() ? nullptr : &tokenSkipInputs)) {
         // SCRIPT_VERIFY_CLEANSTACK requires SCRIPT_VERIFY_WITNESS, so we
         // need to turn both off, and compare against just turning off CLEANSTACK
         // to see if the failure is specifically due to witness validation.
@@ -1005,7 +1025,17 @@ bool MemPoolAccept::ConsensusScriptChecks(ATMPArgs& args, Workspace& ws, Precomp
     // invalid blocks (using TestBlockValidity), however allowing such
     // transactions into the mempool can be exploited as a DoS attack.
     unsigned int currentBlockScriptVerifyFlags = GetBlockScriptFlags(::ChainActive().Tip(), chainparams.GetConsensus());
-    if (!CheckInputsFromMempoolAndCache(tx, state, m_view, m_pool, currentBlockScriptVerifyFlags, txdata)) {
+    std::set<unsigned int> tokenSkipInputsConsensus;
+    {
+        // Same reasoning as PolicyScriptChecks above: no nTokenTxType guard.
+        CTokenViewCache tokenViewTemp2(::ChainstateActive().TokenDB());
+        CTokenBlockUndo tokenUndoDummy2;
+        TxValidationState tokenState2;
+        if (!ApplyTokenTx(tx, tokenViewTemp2, m_view, ::ChainActive().Height() + 1, tokenSkipInputsConsensus, tokenUndoDummy2, tokenState2)) {
+            return state.Invalid(TxValidationResult::TX_CONSENSUS, tokenState2.GetRejectReason(), tokenState2.GetDebugMessage());
+        }
+    }
+    if (!CheckInputsFromMempoolAndCache(tx, state, m_view, m_pool, currentBlockScriptVerifyFlags, txdata, tokenSkipInputsConsensus.empty() ? nullptr : &tokenSkipInputsConsensus)) {
         return error("%s: BUG! PLEASE REPORT THIS! CheckInputScripts failed against latest-block but not STANDARD flags %s, %s",
                 __func__, hash.ToString(), state.ToString());
     }
@@ -1300,6 +1330,8 @@ CoinsViews::CoinsViews(
     bool in_memory,
     bool should_wipe) : m_dbview(
                             GetDataDir() / ldb_name, cache_size_bytes, in_memory, should_wipe),
+                        m_tokendb(
+                            GetDataDir() / "tokendb", cache_size_bytes, in_memory, should_wipe),
                         m_catcherview(&m_dbview) {}
 
 void CoinsViews::InitCache()
@@ -1586,7 +1618,7 @@ void InitScriptExecutionCache() {
  *
  * Non-static (and re-declared) in src/test/txvalidationcache_tests.cpp
  */
-bool CheckInputScripts(const CTransaction& tx, TxValidationState &state, const CCoinsViewCache &inputs, unsigned int flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
+bool CheckInputScripts(const CTransaction& tx, TxValidationState &state, const CCoinsViewCache &inputs, unsigned int flags, bool cacheSigStore, bool cacheFullScriptStore, PrecomputedTransactionData& txdata, std::vector<CScriptCheck> *pvChecks, const std::set<unsigned int>* skipInputs) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
 {
     if (tx.IsCoinBase()) return true;
 
@@ -1603,7 +1635,12 @@ bool CheckInputScripts(const CTransaction& tx, TxValidationState &state, const C
     CSHA256 hasher = g_scriptExecutionCacheHasher;
     hasher.Write(tx.GetWitnessHash().begin(), 32).Write((unsigned char*)&flags, sizeof(flags)).Finalize(hashCacheEntry.begin());
     AssertLockHeld(cs_main); //TODO: Remove this requirement by making CuckooCache not require external locks
-    if (g_scriptExecutionCache.contains(hashCacheEntry, !cacheFullScriptStore)) {
+    // Hybrid Value Layer: never consult/populate the script cache when some
+    // inputs are being skipped (protocol-validated token redemption instead
+    // of script verification) -- the cache is keyed on the whole tx, so
+    // caching a partial check here could later be misread as "fully verified".
+    bool fSkipCache = (skipInputs != nullptr && !skipInputs->empty());
+    if (!fSkipCache && g_scriptExecutionCache.contains(hashCacheEntry, !cacheFullScriptStore)) {
         return true;
     }
 
@@ -1622,6 +1659,12 @@ bool CheckInputScripts(const CTransaction& tx, TxValidationState &state, const C
     assert(txdata.m_spent_outputs.size() == tx.vin.size());
 
     for (unsigned int i = 0; i < tx.vin.size(); i++) {
+        if (skipInputs && skipInputs->count(i)) {
+            // Hybrid Value Layer: this input's prevout is a reserve-custody
+            // output being redeemed via a validated TX_CONVERT_OUT -- verified
+            // by protocol math in ConnectBlock instead of script evaluation.
+            continue;
+        }
 
         // We very carefully only pass in things to CScriptCheck which
         // are clearly committed to by tx' witness hash. This provides
@@ -1662,7 +1705,7 @@ bool CheckInputScripts(const CTransaction& tx, TxValidationState &state, const C
         }
     }
 
-    if (cacheFullScriptStore && !pvChecks) {
+    if (!fSkipCache && cacheFullScriptStore && !pvChecks) {
         // We executed all of the provided scripts, and were told to
         // cache the result. Do so now.
         g_scriptExecutionCache.insert(hashCacheEntry);
@@ -1852,6 +1895,25 @@ DisconnectResult CChainState::DisconnectBlock(const CBlock& block, const CBlockI
         }
     }
 
+    // Hybrid Value Layer: reverse this block's token-side effects
+    {
+        CTokenBlockUndo blockTokenUndo;
+        if (TokenDB().ReadTokenBlockUndo(block.GetHash(), blockTokenUndo)) {
+            CTokenViewCache tokenView(TokenDB());
+            if (!UndoTokenBlock(block, tokenView, blockTokenUndo)) {
+                error("DisconnectBlock(): failed to undo token block state");
+                return DISCONNECT_FAILED;
+            }
+            if (!tokenView.Flush()) {
+                error("DisconnectBlock(): failed to flush reverted token state");
+                return DISCONNECT_FAILED;
+            }
+            TokenDB().EraseTokenBlockUndo(block.GetHash());
+        }
+        // If no token undo record exists, this block carried no token
+        // transactions -- nothing to reverse, not an error.
+    }
+
     // move best block pointer to prevout block
     view.SetBestBlock(pindex->pprev->GetBlockHash());
 
@@ -1983,6 +2045,11 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex* pindex, const Consens
     // Start enforcing BIP112 (CHECKSEQUENCEVERIFY)
     if (pindex->nHeight >= consensusparams.CSVHeight) {
         flags |= SCRIPT_VERIFY_CHECKSEQUENCEVERIFY;
+    }
+    // Start enforcing Hybrid Value Layer token reserve custody
+    if (pindex->nTime >= HYBRID_VALUE_LAYER_ACTIVATION_TIME) {
+        flags |= SCRIPT_VERIFY_TOKEN_RESERVE;
+        flags |= SCRIPT_VERIFY_TOKEN_VESTING_LOCK;
     }
 
     // Start enforcing Taproot using versionbits logic.
@@ -2197,6 +2264,8 @@ bool CChainState::ConnectBlock(const CBlock& block, BlockValidationState& state,
     LogPrint(BCLog::BENCH, "    - Fork checks: %.2fms [%.2fs (%.2fms/blk)]\n", MILLI * (nTime2 - nTime1), nTimeForks * MICRO, nTimeForks * MILLI / nBlocksTotal);
 
     CBlockUndo blockundo;
+    CTokenViewCache tokenView(TokenDB());
+    CTokenBlockUndo blockTokenUndo;
 
     // Precomputed transaction data pointers must not be invalidated
     // until after `control` has run the script checks (potentially
@@ -2285,12 +2354,23 @@ bool CChainState::ConnectBlock(const CBlock& block, BlockValidationState& state,
             return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blk-sigops");
         }
 
+        std::set<unsigned int> tokenSkipInputs;
+        if (!tx.IsCoinBase()) {
+            // No nTokenTxType guard here either -- see PolicyScriptChecks comment.
+            TxValidationState token_tx_state;
+            if (!ApplyTokenTx(tx, tokenView, view, pindex->nHeight, tokenSkipInputs, blockTokenUndo, token_tx_state)) {
+                state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
+                              token_tx_state.GetRejectReason(), token_tx_state.GetDebugMessage());
+                return error("%s: ApplyTokenTx: %s, %s", __func__, tx.GetHash().ToString(), state.ToString());
+            }
+        }
+
         if (!tx.IsCoinBase())
         {
             std::vector<CScriptCheck> vChecks;
             bool fCacheResults = fJustCheck; /* Don't cache results if we're actually connecting blocks (still consult the cache, though) */
             TxValidationState tx_state;
-            if (fScriptChecks && !CheckInputScripts(tx, tx_state, view, flags, fCacheResults, fCacheResults, txsdata[i], g_parallel_script_checks ? &vChecks : nullptr)) {
+            if (fScriptChecks && !CheckInputScripts(tx, tx_state, view, flags, fCacheResults, fCacheResults, txsdata[i], g_parallel_script_checks ? &vChecks : nullptr, tokenSkipInputs.empty() ? nullptr : &tokenSkipInputs)) {
                 // Any transaction validation failure in ConnectBlock is a block consensus failure
                 state.Invalid(BlockValidationResult::BLOCK_CONSENSUS,
                               tx_state.GetRejectReason(), tx_state.GetDebugMessage());
@@ -2425,6 +2505,12 @@ bool CChainState::ConnectBlock(const CBlock& block, BlockValidationState& state,
 
     if (!WriteUndoDataForBlock(blockundo, state, pindex, chainparams))
         return false;
+    if (!tokenView.Flush()) {
+        return AbortNode(state, "Failed to write Hybrid Value Layer token database changes");
+    }
+    if (!TokenDB().WriteTokenBlockUndo(block.GetHash(), blockTokenUndo)) {
+        return AbortNode(state, "Failed to write Hybrid Value Layer token undo data");
+    }
 
     if (!pindex->IsValid(BLOCK_VALID_SCRIPTS)) {
         pindex->RaiseValidity(BLOCK_VALID_SCRIPTS);

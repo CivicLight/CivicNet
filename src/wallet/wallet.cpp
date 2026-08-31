@@ -3103,6 +3103,8 @@ bool CWallet::FundTransaction(CMutableTransaction& tx, CAmount& nFeeRet, int& nC
     for (size_t idx = 0; idx < tx.vout.size(); idx++) {
         const CTxOut& txOut = tx.vout[idx];
         CRecipient recipient = {txOut.scriptPubKey, txOut.nValue, setSubtractFeeFromOutputs.count(idx) == 1};
+        recipient.tokenID = txOut.tokenID;
+        recipient.nTokenAmount = txOut.nTokenAmount;
         vecSend.push_back(recipient);
     }
 

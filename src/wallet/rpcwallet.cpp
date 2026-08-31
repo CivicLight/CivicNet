@@ -3461,7 +3461,6 @@ static RPCHelpMan fundrawtransaction()
     if (!DecodeHexTx(tx, request.params[0].get_str(), try_no_witness, try_witness)) {
         throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
     }
-
     CAmount fee;
     int change_position;
     CCoinControl coin_control;

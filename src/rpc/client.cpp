@@ -26,6 +26,20 @@ public:
  */
 static const CRPCConvertParam vRPCConvertParams[] =
 {
+    { "createtokenissuetx", 0, "inputs" },
+    { "createtokenissuetx", 1, "token" },
+    { "createtokenconverttx", 0, "inputs" },
+    { "createtokenconverttx", 1, "token" },
+    { "createtokenminttx", 0, "inputs" },
+    { "createtokenminttx", 1, "token" },
+    { "createtokenmetadataupdatetx", 0, "inputs" },
+    { "createtokenmetadataupdatetx", 1, "token" },
+    { "createtokentransfertx", 0, "inputs" },
+    { "createtokentransfertx", 1, "outputs" },
+    { "createtokenvestingreleasetx", 0, "inputs" },
+    { "createtokenvestingreleasetx", 1, "token" },
+    { "createtokenburntx", 0, "inputs" },
+    { "createtokenburntx", 1, "token" },
     { "setmocktime", 0, "timestamp" },
     { "mockscheduler", 0, "delta_time" },
     { "utxoupdatepsbt", 1, "descriptors" },

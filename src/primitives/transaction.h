@@ -12,6 +12,7 @@
 #include <serialize.h>
 #include <uint256.h>
 #include <mweb/mweb_models.h>
+#include <token/tokentx.h>
 #include <boost/optional.hpp>
 #include <boost/variant.hpp>
 
@@ -25,6 +26,7 @@
  */
 static const int SERIALIZE_TRANSACTION_NO_WITNESS = 0x40000000;
 static const int SERIALIZE_NO_MWEB = 0x20000000;
+static const int SERIALIZE_NO_TOKENS = 0x10000000;
 
 /** An outpoint - a combination of a transaction hash and an index n into its vout */
 class COutPoint
@@ -175,6 +177,13 @@ public:
     CAmount nValue;
     CScript scriptPubKey;
 
+    // --- Hybrid Value Layer token fields -- NOT part of SERIALIZE_METHODS below.
+    // Serialized separately at the CTransaction level (see (Un)SerializeTransaction),
+    // gated by tx-level `flags & 2` -- same pattern as CTxIn::scriptWitness (see its
+    // "Only serialized through CTransaction" comment above).
+    uint256  tokenID;        // null = not a token output (plain CIVIC)
+    uint64_t nTokenAmount;   // 0 = not a token output
+
     CTxOut()
     {
         SetNull();
@@ -188,6 +197,8 @@ public:
     {
         nValue = -1;
         scriptPubKey.clear();
+        tokenID.SetNull();
+        nTokenAmount = 0;
     }
 
     bool IsNull() const
@@ -195,10 +206,17 @@ public:
         return (nValue == -1);
     }
 
+    bool IsTokenOutput() const
+    {
+        return !tokenID.IsNull() && nTokenAmount > 0;
+    }
+
     friend bool operator==(const CTxOut& a, const CTxOut& b)
     {
         return (a.nValue       == b.nValue &&
-                a.scriptPubKey == b.scriptPubKey);
+                a.scriptPubKey == b.scriptPubKey &&
+                a.tokenID      == b.tokenID &&
+                a.nTokenAmount == b.nTokenAmount);
     }
 
     friend bool operator!=(const CTxOut& a, const CTxOut& b)
@@ -278,6 +296,7 @@ template<typename Stream, typename TxType>
 inline void UnserializeTransaction(TxType& tx, Stream& s) {
     const bool fAllowWitness = !(s.GetVersion() & SERIALIZE_TRANSACTION_NO_WITNESS);
     const bool fAllowMWEB = !(s.GetVersion() & SERIALIZE_NO_MWEB);
+    const bool fAllowTokens = !(s.GetVersion() & SERIALIZE_NO_TOKENS);
 
     s >> tx.nVersion;
     unsigned char flags = 0;
@@ -285,7 +304,13 @@ inline void UnserializeTransaction(TxType& tx, Stream& s) {
     tx.vout.clear();
     /* Try to read the vin. In case the dummy is there, this will be read as an empty vector. */
     s >> tx.vin;
-    if (tx.vin.size() == 0 && fAllowWitness) {
+    // The dummy/flags marker (vin.size()==0) is used by the extended format
+    // for witness data AND for MWEB/token data -- gating this detection on
+    // fAllowWitness alone (as upstream Bitcoin Core does, since it only ever
+    // had witness to worry about) misparses a witness-less tx that still
+    // carries MWEB or token flags when decoded with fAllowWitness=false
+    // (e.g. DecodeHexTx's no-witness fallback parse attempt).
+    if (tx.vin.size() == 0 && (fAllowWitness || fAllowMWEB || fAllowTokens)) {
         /* We read a dummy or an empty vin. */
         s >> flags;
         if (flags != 0) {
@@ -322,6 +347,28 @@ inline void UnserializeTransaction(TxType& tx, Stream& s) {
             tx.m_hogEx = true;
         }
     }
+    if ((flags & 2) && fAllowTokens) {
+        /* The token flag is present, and we support the Hybrid Value Layer. */
+        flags ^= 2;
+        s >> tx.nTokenTxType;
+        if (tx.nTokenTxType == TOKEN_TX_ISSUE) {
+            s >> tx.tokenIssuePayload;
+        } else if (tx.nTokenTxType == TOKEN_TX_CONVERT_OUT) {
+            s >> tx.tokenConvertOutPayload;
+        } else if (tx.nTokenTxType == TOKEN_TX_MINT) {
+            s >> tx.tokenMintPayload;
+        } else if (tx.nTokenTxType == TOKEN_TX_VESTING_RELEASE) {
+            s >> tx.tokenVestingReleasePayload;
+        } else if (tx.nTokenTxType == TOKEN_TX_BURN) {
+            s >> tx.tokenBurnPayload;
+        } else if (tx.nTokenTxType == TOKEN_TX_METADATA_UPDATE) {
+            s >> tx.tokenMetadataUpdatePayload;
+        }
+        for (size_t i = 0; i < tx.vout.size(); i++) {
+            s >> tx.vout[i].tokenID;
+            s >> tx.vout[i].nTokenAmount;
+        }
+    }
     if (flags) {
         /* Unknown flag in the serialization */
         throw std::ios_base::failure("Unknown transaction optional data");
@@ -333,6 +380,7 @@ template<typename Stream, typename TxType>
 inline void SerializeTransaction(const TxType& tx, Stream& s) {
     const bool fAllowWitness = !(s.GetVersion() & SERIALIZE_TRANSACTION_NO_WITNESS);
     const bool fAllowMWEB = !(s.GetVersion() & SERIALIZE_NO_MWEB);
+    const bool fAllowTokens = !(s.GetVersion() & SERIALIZE_NO_TOKENS);
 
     s << tx.nVersion;
     unsigned char flags = 0;
@@ -346,6 +394,17 @@ inline void SerializeTransaction(const TxType& tx, Stream& s) {
     if (fAllowMWEB) {
         if (tx.m_hogEx || !tx.mweb_tx.IsNull()) {
             flags |= 8;
+        }
+    }
+    if (fAllowTokens) {
+        bool fHasTokenData = (tx.nTokenTxType != TOKEN_TX_NONE);
+        if (!fHasTokenData) {
+            for (const auto& out : tx.vout) {
+                if (out.IsTokenOutput()) { fHasTokenData = true; break; }
+            }
+        }
+        if (fHasTokenData) {
+            flags |= 2;
         }
     }
 
@@ -364,6 +423,26 @@ inline void SerializeTransaction(const TxType& tx, Stream& s) {
     }
     if (flags & 8) {
         s << tx.mweb_tx;
+    }
+    if (flags & 2) {
+        s << tx.nTokenTxType;
+        if (tx.nTokenTxType == TOKEN_TX_ISSUE) {
+            s << tx.tokenIssuePayload;
+        } else if (tx.nTokenTxType == TOKEN_TX_CONVERT_OUT) {
+            s << tx.tokenConvertOutPayload;
+        } else if (tx.nTokenTxType == TOKEN_TX_MINT) {
+            s << tx.tokenMintPayload;
+        } else if (tx.nTokenTxType == TOKEN_TX_VESTING_RELEASE) {
+            s << tx.tokenVestingReleasePayload;
+        } else if (tx.nTokenTxType == TOKEN_TX_BURN) {
+            s << tx.tokenBurnPayload;
+        } else if (tx.nTokenTxType == TOKEN_TX_METADATA_UPDATE) {
+            s << tx.tokenMetadataUpdatePayload;
+        }
+        for (size_t i = 0; i < tx.vout.size(); i++) {
+            s << tx.vout[i].tokenID;
+            s << tx.vout[i].nTokenAmount;
+        }
     }
     s << tx.nLockTime;
 }
@@ -394,7 +473,16 @@ public:
     const int32_t nVersion;
     const uint32_t nLockTime;
     const MWEB::Tx mweb_tx;
-    
+
+    // --- Hybrid Value Layer token fields ---
+    const uint8_t nTokenTxType = TOKEN_TX_NONE;
+    const CTokenIssuePayload tokenIssuePayload;
+    const CTokenConvertOutPayload tokenConvertOutPayload;
+    const CTokenMintPayload tokenMintPayload;
+    const CTokenVestingReleasePayload tokenVestingReleasePayload;
+    const CTokenBurnPayload tokenBurnPayload;
+    const CTokenMetadataUpdatePayload tokenMetadataUpdatePayload;
+
     /** Memory only. */
     const bool m_hogEx;
 
@@ -512,6 +600,15 @@ struct CMutableTransaction
     int32_t nVersion;
     uint32_t nLockTime;
     MWEB::Tx mweb_tx;
+
+    // --- Hybrid Value Layer token fields ---
+    uint8_t nTokenTxType = TOKEN_TX_NONE;
+    CTokenIssuePayload tokenIssuePayload;
+    CTokenConvertOutPayload tokenConvertOutPayload;
+    CTokenMintPayload tokenMintPayload;
+    CTokenVestingReleasePayload tokenVestingReleasePayload;
+    CTokenBurnPayload tokenBurnPayload;
+    CTokenMetadataUpdatePayload tokenMetadataUpdatePayload;
 
     /** Memory only. */
     bool m_hogEx = false;
