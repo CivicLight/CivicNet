@@ -18,8 +18,7 @@ static const uint8_t      MAX_TOKEN_DECIMALS   = 8;
 static const uint64_t     MAX_TOKEN_SUPPLY_CAP = 1000000000ULL; // 1 billion (Tier 1 cap)
 static const unsigned int MAX_METADATA_URI_LEN = 256; // metadataUri max length, off-chain content (IPFS/HTTP) pointer
 
-// TODO: set real deploy time before mainnet activation (0 = active immediately, dev/test only)
-static const int64_t HYBRID_VALUE_LAYER_ACTIVATION_TIME = 0;
+static const int64_t HYBRID_VALUE_LAYER_ACTIVATION_TIME = 1788249600; // 2026-09-01 08:00:00 UTC
 
 /** Builds the consensus-recognized reserve-custody script for a token:
  *  PUSH(32-byte tokenID) OP_TOKEN_RESERVE. Funds sent here are NOT spendable by
