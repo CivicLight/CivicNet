@@ -8,6 +8,7 @@
 #include <crypto/sha256.h>
 #include <pubkey.h>
 #include <script/script.h>
+#include <token/tokentx.h>
 
 #include <string>
 
@@ -154,6 +155,16 @@ TxoutType Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned c
         return TxoutType::NONSTANDARD;
     }
 
+    // Hybrid Value Layer token reserve-custody script: PUSH(32-byte tokenID)
+    // OP_TOKEN_RESERVE. Recognized here so mempool standardness policy
+    // (IsStandardTx) accepts it -- it's already unspendable by any key at
+    // the consensus level (see IsTokenReserveScript), this only affects
+    // whether the node will relay/mine transactions that create it.
+    if (IsTokenReserveScript(scriptPubKey)) {
+        std::vector<unsigned char> tokenIdBytes(scriptPubKey.begin() + 1, scriptPubKey.begin() + 33);
+        vSolutionsRet.push_back(std::move(tokenIdBytes));
+        return TxoutType::TOKEN_RESERVE;
+    }
     // Provably prunable, data-carrying output
     //
     // So long as script passes the IsUnspendable() test and all but the first

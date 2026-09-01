@@ -134,6 +134,7 @@ enum class TxoutType {
     WITNESS_MWEB_PEGIN, //!< Hash of the peg-in kernel
     WITNESS_MWEB_HOGADDR, //!< HogAddr (first output of HogEx)
     WITNESS_UNKNOWN, //!< Only for Witness versions not already defined above
+    TOKEN_RESERVE, //!< Hybrid Value Layer token reserve-custody script (PUSH(32-byte tokenID) OP_TOKEN_RESERVE) -- unspendable by any key, only released via a valid TOKEN_TX_CONVERT_OUT
 };
 
 class CNoDestination {
