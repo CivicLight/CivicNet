@@ -60,6 +60,7 @@ std::string GetTxnOutputType(TxoutType t)
     case TxoutType::WITNESS_MWEB_PEGIN: return "witness_mweb_pegin";
     case TxoutType::WITNESS_MWEB_HOGADDR: return "witness_mweb_hogaddr";
     case TxoutType::WITNESS_UNKNOWN: return "witness_unknown";
+    case TxoutType::TOKEN_RESERVE: return "token_reserve";
     } // no default case, so the compiler can warn about missing cases
     assert(false);
 }
